@@ -1,2 +1,3 @@
 imagenet-1k/
 .cache/
+__pycache__/
