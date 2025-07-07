@@ -11,13 +11,14 @@ from torch.utils.data.distributed import DistributedSampler
 import torchmetrics
 import torchmetrics.classification
 import warnings
+from src.optlibA import optA
 
-torch.set_float32_matmul_precision('high')
-device = torch.device(f"cuda:{os.environ["LOCAL_RANK"]}" if torch.cuda.is_available() else "cpu")
-local_rank = int(os.environ["LOCAL_RANK"])
 world_size = torch.cuda.device_count()
-torch.cuda.set_device(local_rank)
+local_rank = int(os.environ["LOCAL_RANK"])
 init_process_group(backend="nccl", rank=local_rank, world_size=world_size)
+device = torch.device(f"cuda:{os.environ["LOCAL_RANK"]}" if torch.cuda.is_available() else "cpu")
+torch.set_float32_matmul_precision('high')
+torch.cuda.set_device(local_rank)
 
 # 屏蔽 EXIF 警告
 warnings.filterwarnings("ignore", message="Corrupt EXIF data.*", category=UserWarning, module="PIL.TiffImagePlugin")
@@ -67,10 +68,13 @@ def train():
                             drop_last=True,
                             persistent_workers=True,
                             )
+
+    dataloader = optA(dataloader)
+
     scaler = torch.amp.GradScaler()
     metric = torchmetrics.classification.Accuracy(task="multiclass",num_classes=1000).to(device)
     progress = tqdm(total=len(dataloader), desc="Training Progress",leave=True)
-    epoch = 10
+    epoch = 5
 
     for e in range(epoch):
         dataloader.sampler.set_epoch(e)
@@ -85,7 +89,7 @@ def train():
 
             torch.distributed.all_reduce(acc, op=torch.distributed.ReduceOp.AVG)
             if local_rank == 0:
-                progress.set_description(f"Epoch: {e} Loss: {loss_value.item():.4f} | Acc: {acc.item():.4f}")
+                progress.set_description(f"Epoch: {e+1} Loss: {loss_value.item():.4f} | Acc: {acc.item():.4f}")
                 progress.update()
             
             scaler.scale(loss_value).backward()
@@ -100,9 +104,10 @@ def train():
     if local_rank == 0:
         progress.close()
 
+    destroy_process_group()
 
 if __name__ == "__main__":
     import torch.multiprocessing as mp
     mp.set_start_method("spawn")
     train()
-    destroy_process_group()
+    

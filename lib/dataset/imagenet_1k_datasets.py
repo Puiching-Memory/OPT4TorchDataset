@@ -17,7 +17,7 @@ import os
 
 import datasets
 
-from .classes import IMAGENET2012_CLASSES
+from .imagenet_1k_classes import IMAGENET2012_CLASSES
 
 
 _CITATION = """\
@@ -40,9 +40,9 @@ ILSVRC 2012, commonly known as 'ImageNet' is an image dataset organized accordin
 """
 
 _DATA_URL = {
-    "train": [f"./imagenet-1k/data/train_images_{i}.tar.gz" for i in range(5)],
-    "val": ["./imagenet-1k/data/val_images.tar.gz"],
-    "test": ["./imagenet-1k/data/test_images.tar.gz"],
+    "train": [f"../../imagenet-1k/data/train_images_{i}.tar.gz" for i in range(5)],
+    "val": ["../../imagenet-1k/data/val_images.tar.gz"],
+    "test": ["../../imagenet-1k/data/test_images.tar.gz"],
 }
 
 
