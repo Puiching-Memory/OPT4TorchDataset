@@ -7,4 +7,4 @@ NUM_TRAINERS=$(echo $CUDA_VISIBLE_DEVICES | tr -cd ',' | wc -c)
 NUM_TRAINERS=$((NUM_TRAINERS + 1))
 
 # 启动 DDP 训练
-torchrun --standalone --nnodes=1 --nproc-per-node=$NUM_TRAINERS train.py
+torchrun --standalone --nnodes=1 --nproc-per-node=$NUM_TRAINERS train_ddp.py
