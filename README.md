@@ -14,7 +14,7 @@ conda create -n opt4 python=3.13
 conda activate opt4
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 pip install timm huggingface-hub datasets[vision] torchmetrics
-pip install swanlab # optional
+pip install swanlab zarr # optional
 # pip install pillow-avif-plugin
 pip install pillow==11.3.0
 ```
