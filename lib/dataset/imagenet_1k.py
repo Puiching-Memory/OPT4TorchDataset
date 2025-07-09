@@ -9,23 +9,16 @@ class Imagenet1K(data.Dataset):
         self.root_dir = root_dir
         self.split = split
         self.idx_list = os.listdir(os.path.join(root_dir, split))
-        self.image_transforms = v2.Compose(
-            [
-                v2.ToImage(),
-                v2.ToDtype(torch.float32, scale=True),
-                #v2.Resize(size=(256, 256)),
-                v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            ]
-        )
 
     def __len__(self):
         return len(self.idx_list)
 
     def __getitem__(self, index):
-        print(index)
-        image = torchvision.io.decode_image(os.path.join(self.root_dir, self.split,  self.idx_list[index]))
+        #print(index)
+        image = torchvision.io.decode_image(os.path.join(self.root_dir, self.split,  self.idx_list[index]),
+                                            mode=torchvision.io.ImageReadMode.RGB)
         label = torch.tensor(int(self.idx_list[index].split("-")[0]))
-        print(image,label)
+        #print(image,label)
         return image,label
 
 
