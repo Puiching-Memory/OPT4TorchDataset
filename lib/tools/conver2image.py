@@ -2,7 +2,6 @@
 # 171GB -> train:199GB + 
 from datasets import load_dataset
 import os
-import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
 from tqdm import tqdm
 
@@ -19,15 +18,18 @@ dataset = load_dataset("./lib/dataset/imagenet_1k_datasets.py",
                     )
 dataset.with_format("torch")
 
-progress = tqdm(total=len(dataset["train"])+len(dataset["validation"])+len(dataset["test"]), desc="Converting Progress",leave=True)
+print(f"total number of train: {len(dataset["train"])}")
+print(f"total number of validation: {len(dataset["validation"])}")
+print(f"total number of test: {len(dataset["test"])}")
+
+progress = tqdm(desc="Converting Progress",leave=True)
 
 def process_item(index, d, split):
     image = d["image"]
     label = d["label"]
     if image.mode != 'RGB': image = image.convert('RGB')
     image = image.resize((256, 256))
-    hash_object = hashlib.sha256(image.tobytes())
-    file_name = f"{label}-{hash_object.hexdigest()}.jpeg"
+    file_name = f"{label}-{split}-{index}.jpeg"
     if os.path.exists(os.path.join(output_dir, split ,file_name)):return
     image.save(os.path.join(output_dir, split ,file_name), format="JPEG", quality=95, optimize=True)
 
