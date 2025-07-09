@@ -11,7 +11,7 @@ from torch.utils.data.distributed import DistributedSampler
 import torchmetrics
 import torchmetrics.classification
 import warnings
-from src.optlibA import optA
+from src.cachelib import optA
 
 world_size = torch.cuda.device_count()
 local_rank = int(os.environ["LOCAL_RANK"])
@@ -29,8 +29,8 @@ warnings.filterwarnings("ignore", message="Metadata Warning, tag 274 had too man
 def custom_collate_fn(batch):
     transforms = v2.Compose([v2.ToImage(),
                              v2.ToDtype(torch.float32, scale=True),
-                             v2.Lambda(lambda x: x[:3]),  # 移除 alpha 通道
-                             v2.Resize((224,224)),
+                             #v2.Lambda(lambda x: x[:3]),  # 移除 alpha 通道
+                             #v2.Resize((256,256)),
                              v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
                              ])
     images = [transforms(item['image']) for item in batch]
