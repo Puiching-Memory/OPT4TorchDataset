@@ -5,9 +5,10 @@ import torch
 import torchvision
 
 class Imagenet1K(data.Dataset):
-    def __init__(self, root_dir):
+    def __init__(self, root_dir, split):
         self.root_dir = root_dir
-        self.idx_list = os.listdir(self.root_dir)
+        self.split = split
+        self.idx_list = os.listdir(os.path.join(root_dir, split))
         self.image_transforms = v2.Compose(
             [
                 v2.ToImage(),
@@ -22,7 +23,7 @@ class Imagenet1K(data.Dataset):
 
     def __getitem__(self, index):
         print(index)
-        image = torchvision.io.decode_image(os.path.join(self.root_dir, self.idx_list[index]))
+        image = torchvision.io.decode_image(os.path.join(self.root_dir, self.split,  self.idx_list[index]))
         label = torch.tensor(int(self.idx_list[index].split("-")[0]))
         print(image,label)
         return image,label
@@ -32,7 +33,8 @@ if __name__ == "__main__":
     from torch.utils.data import DataLoader
 
     dataset = Imagenet1K(
-        r"/desay2PB/ct/dev/ZJW_bevcode/OPT4TorchDataset/.cache/imagenet-1k-png-256",
+        r".cache/imagenet-1k-jpeg-256",
+        "train"
     )
     dataloader = DataLoader(dataset=dataset, batch_size=2, shuffle=True,num_workers=0,pin_memory=True)
 
