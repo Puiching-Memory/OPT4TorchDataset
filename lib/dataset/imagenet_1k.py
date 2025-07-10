@@ -14,10 +14,9 @@ class Imagenet1K(data.Dataset):
         self.root_dir = root_dir
         self.split = split
         self.idx_list = os.listdir(os.path.join(root_dir, split))
-        seed = 0
         self.data_generator = torch.Generator()
         self.data_generator.manual_seed(0)
-        OPTInit(seed,data.RandomSampler,self.data_generator,self.__len__())
+        OPTInit(data.RandomSampler,self.data_generator,self.__len__())
     def get_generator(self):
         return self.data_generator
 
