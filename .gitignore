@@ -1,3 +1,10 @@
+# dataset
 imagenet-1k/
 .cache/
+
+# python cache
 __pycache__/
+
+# tools for dev
+chsrc-x64-linux
+Miniforge3-25.3.0-3-Linux-x86_64.sh
