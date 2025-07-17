@@ -6,23 +6,25 @@ import timm
 import torch
 from torchvision.transforms import v2
 from torch.utils.data import DataLoader
+import torch.utils.data as data
 from tqdm import tqdm
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.distributed import init_process_group, destroy_process_group
-from torch.utils.data.distributed import DistributedSampler
+from torch.nn.parallel import DataParallel as DP
 import torchmetrics
 import torchmetrics.classification
 import warnings
 from lib.dataset import imagenet_1k
 from torch.utils.data import DataLoader
 
+
 # 屏蔽 EXIF 警告
 warnings.filterwarnings("ignore", message="Corrupt EXIF data.*", category=UserWarning, module="PIL.TiffImagePlugin")
 warnings.filterwarnings("ignore", message="Truncated File Read", category=UserWarning, module="PIL.TiffImagePlugin")
 warnings.filterwarnings("ignore", message="Metadata Warning, tag 274 had too many entries", category=UserWarning, module="PIL.TiffImagePlugin")
 
+# print(timm.list_models())
+
 # check Device
-device = torch.device(f"cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device(f"cuda:1" if torch.cuda.is_available() else "cpu")
 
 transforms = v2.Compose([v2.ToImage(),
                             v2.ToDtype(torch.float32, scale=True),
@@ -34,16 +36,21 @@ dataset = imagenet_1k.Imagenet1K(
     r".cache/imagenet-1k-jpeg-256",
     "train"
 )
+
 dataloader = DataLoader(dataset=dataset,
-                        batch_size=32,
-                        shuffle=True,
+                        batch_size=1024,
+                        shuffle=False, # shuffle must be False
                         num_workers=4,
                         pin_memory=True,
-                        drop_last=True,
+                        sampler=data.RandomSampler(dataset,
+                                                    replacement=True,
+                                                    num_samples=len(dataset) * 3, # * batch size
+                                                    generator=dataset.get_generator()
+                                                    ),
                         )
 
-model = timm.create_model('resnetv2_50',
-                        pretrained=True,
+model = timm.create_model('resnet50',
+                        #pretrained=True,
                         cache_dir="./.cache/",
                         num_classes=1000,
                         )
@@ -65,7 +72,6 @@ for batch_idx, (image, label) in enumerate(dataloader):
     image = transforms(image).to(device)
     label = label.to(device)
 
-
     optimizer.zero_grad()
     with torch.autocast(device_type="cuda"):
         output = model(image)
@@ -80,7 +86,7 @@ for batch_idx, (image, label) in enumerate(dataloader):
 
     progress.update()
     progress.set_description(f"Loss: {loss_value.item():.4f} ACC: {acc.item():.4f} AUROC: {auroc.item():.4f} AP: {ap.item():.4f}")
-    break
+    # break
 
 progress.close()
 print("Finished training, Starting validation")
@@ -92,7 +98,7 @@ dataset = imagenet_1k.Imagenet1K(
     "validation"
 )
 dataloader = DataLoader(dataset=dataset,
-                        batch_size=32,
+                        batch_size=1024,
                         shuffle=True,
                         num_workers=4,
                         pin_memory=True,
