@@ -27,6 +27,8 @@ ext-modules = [
 [tool.setuptools.dynamic]
 version = {attr = "OPT4TorchDataSet.__version__"}
 
+[tool.cibuildwheel]
+
 [project.urls]
 Homepage = "https://github.com/Puiching-Memory/OPT4TorchDataset"
 Issues = "https://github.com/Puiching-Memory/OPT4TorchDataset/issues"
