@@ -1,6 +1,66 @@
 # OPT4TorchDataset
 Plug-and-Play Optimal Page Replacement Algorithm (OPT) for Torch Dataset
 
+## install
+```bash
+pip install OPT4TorchDataset
+```
+
+## usage
+```python
+import torch,torchvision
+import torch.utils.data as data
+from OPT4TorchDataSet.cachelib import OPTCache,OPTInit
+
+class Imagenet1K(data.Dataset):
+    def __init__(self, root_dir, split):
+        self.root_dir = root_dir
+        self.split = split
+        self.idx_list = os.listdir(os.path.join(root_dir, split))
+
+        # must Init first!
+        self.data_generator = torch.Generator()
+        self.data_generator.manual_seed(0)
+        OPTInit(data.RandomSampler,self.data_generator,self.__len__())
+
+    # Provide a convenient access method for DataLoader
+    def get_generator(self):
+        return self.data_generator
+
+    def __len__(self):
+        return len(self.idx_list)
+    
+    # use cache here!
+    @OPTCache() 
+    def __getitem__(self, index):
+        image = torchvision.io.decode_image(os.path.join(self.root_dir, self.split,  self.idx_list[index]),
+                                            mode=torchvision.io.ImageReadMode.RGB)
+        label = torch.tensor(int(self.idx_list[index].split("-")[0]))
+        return image,label
+
+if __name__ == "__main__":
+    from torch.utils.data import DataLoader
+
+    dataset = Imagenet1K(
+        r".cache/imagenet-1k-jpeg-256",
+        "train"
+    )
+    dataloader = DataLoader(dataset=dataset,
+                            batch_size=2,
+                            shuffle=False, # shuffle must be False
+                            num_workers=0,
+                            pin_memory=True,
+                            sampler=data.RandomSampler(dataset,
+                                                       replacement=True,
+                                                       num_samples=len(dataset) * 3,
+                                                       generator=dataset.get_generator()
+                                                       ),
+                            )
+
+    for batch_idx, (image, label) in enumerate(dataloader):
+        break
+```
+
 ## env
 ```bash
 # using ubuntu 24.04 cuda 12.8 h800 sm90
@@ -23,7 +83,15 @@ pip install zarr nvidia-dali-cuda120 # optional
 huggingface-cli download --repo-type dataset --resume-download ILSVRC/imagenet-1k --local-dir ./imagenet-1k --token {your_token_here}
 ```
 
-## exp
+## experiment
+dataset: imagenet-1k
+iter: 1000
+device: NVIDIA H800 CUDA 12.8
+system: ubuntu 24.04
+
+| model    | ACC | W OPT | O OPT | log |
+| -------- | --- | ----- | ----- | --- |
+| resnet50 |     |       | h     | h   |
 
 ## build up whl
 ```bash
