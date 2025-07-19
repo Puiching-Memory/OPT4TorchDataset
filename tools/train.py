@@ -24,7 +24,7 @@ warnings.filterwarnings("ignore", message="Metadata Warning, tag 274 had too man
 # print(timm.list_models())
 
 # check Device
-device = torch.device(f"cuda:1" if torch.cuda.is_available() else "cpu")
+device = torch.device(f"cuda:0" if torch.cuda.is_available() else "cpu")
 
 transforms = v2.Compose([v2.ToImage(),
                             v2.ToDtype(torch.float32, scale=True),
@@ -50,13 +50,12 @@ dataloader = DataLoader(dataset=dataset,
                         )
 
 model = timm.create_model('resnet50',
-                        #pretrained=True,
+                        pretrained=True,
                         cache_dir="./.cache/",
                         num_classes=1000,
-                        )
+                        ).to(device)
 model.train()
 model = torch.compile(model)
-model.to(device)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 scaler = torch.amp.GradScaler()
