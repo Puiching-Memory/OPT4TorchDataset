@@ -23,7 +23,7 @@ class Imagenet1K(data.Dataset):
     def __len__(self):
         return len(self.idx_list)
 
-    @OPTCache()
+    #@OPTCache()
     def __getitem__(self, index):
         image = torchvision.io.decode_image(os.path.join(self.root_dir, self.split,  self.idx_list[index]),
                                             mode=torchvision.io.ImageReadMode.RGB)

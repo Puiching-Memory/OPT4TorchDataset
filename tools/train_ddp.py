@@ -1,5 +1,8 @@
 from datasets import load_dataset
 import os
+import sys
+sys.path.append("./")
+
 import timm
 import torch
 from torchvision.transforms import v2
@@ -11,7 +14,6 @@ from torch.utils.data.distributed import DistributedSampler
 import torchmetrics
 import torchmetrics.classification
 import warnings
-from src.cachelib import optA
 
 world_size = torch.cuda.device_count()
 local_rank = int(os.environ["LOCAL_RANK"])
@@ -40,7 +42,7 @@ def custom_collate_fn(batch):
 def train():
     #print(timm.list_models())
     model = timm.create_model('resnetv2_50',
-                            pretrained=True,
+                            #pretrained=True,
                             cache_dir="./.cache/",
                             num_classes=1000,
                             )
@@ -68,8 +70,6 @@ def train():
                             drop_last=True,
                             persistent_workers=True,
                             )
-
-    dataloader = optA(dataloader)
 
     scaler = torch.amp.GradScaler()
     metric = torchmetrics.classification.Accuracy(task="multiclass",num_classes=1000).to(device)
