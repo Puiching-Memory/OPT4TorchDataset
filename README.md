@@ -73,8 +73,7 @@ apt install build-essential
 conda create -n opt4 python=3.13
 conda activate opt4
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-pip install timm huggingface-hub datasets[vision] torchmetrics pillow==11.3.0
-pip install swanlab  # optional
+pip install timm huggingface-hub datasets[vision] torchmetrics pillow cachetools swanlab
 pip install zarr nvidia-dali-cuda120 # optional
 ```
 
@@ -85,13 +84,26 @@ huggingface-cli download --repo-type dataset --resume-download ILSVRC/imagenet-1
 
 ## experiment
 dataset: imagenet-1k
-iter: 1000
 device: NVIDIA H800 CUDA 12.8
 system: ubuntu 24.04
 
-| model    | ACC | W OPT | O OPT | log |
-| -------- | --- | ----- | ----- | --- |
-| resnet50 |     |       | h     | h   |
+Future Index: 1281 (1% cache)
+Cache Size: 128116 (10% dataset) (? GB RAM)
+DataIter summary: 3754 (1281167)
+Epoch: 3
+
+## Training Speed (one device)
+| model    | ACC | BaseLine               | OPT ON                 | LRU ON                   | LFU ON                 | FIFO ON                | RR ON                  | log |
+| -------- | --- | ---------------------- | ---------------------- | ------------------------ | ---------------------- | ---------------------- | ---------------------- | --- |
+| resnet50 |     | 01:29<1:14:37 1.21s/it | 01:29<1:13:57 1.20s/it | 01:33<1:16:42,  1.25s/it | 01:27<1:11:00 1.16s/it | 01:31<1:16:24 1.24s/it | 01:29<1:13:45 1.20s/it |     |
+
+## Training Speed (multi devices DDP)
+
+
+## Hit rate
+| BaseLine | OPT ON | LRU ON |
+| -------- | ------ | ------ |
+| 0%       |
 
 ## build up whl
 ```bash

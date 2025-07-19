@@ -1,0 +1,6 @@
+{
+    "exclude": [
+      "imagenet-1k/",
+      ".cache/",
+    ]
+  }

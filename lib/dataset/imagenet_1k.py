@@ -2,12 +2,14 @@ import torch.utils.data as data
 import os
 import sys
 sys.path.append(os.path.abspath("./"))
+sys.path.append(os.path.abspath("src/OPT4TorchDataSet"))
 
 from torchvision.transforms import v2
 import torch
 import torchvision
 
-from src.cachelib import OPTCache,OPTInit
+from cachelib import OPTCache,OPTInit
+from cachetools import cached, LRUCache, LFUCache, FIFOCache, RRCache
 
 class Imagenet1K(data.Dataset):
     def __init__(self, root_dir, split):
@@ -17,13 +19,18 @@ class Imagenet1K(data.Dataset):
         self.data_generator = torch.Generator()
         self.data_generator.manual_seed(0)
         OPTInit(data.RandomSampler,self.data_generator,self.__len__())
+        print(len(self.idx_list))
     def get_generator(self):
         return self.data_generator
 
     def __len__(self):
         return len(self.idx_list)
 
-    #@OPTCache()
+    @OPTCache(cache_max=128116)
+    #@cached(cache=LRUCache(maxsize=128116))
+    #@cached(cache=LFUCache(maxsize=128116))
+    #@cached(cache=FIFOCache(maxsize=128116))
+    #@cached(cache=RRCache(maxsize=128116))
     def __getitem__(self, index):
         image = torchvision.io.decode_image(os.path.join(self.root_dir, self.split,  self.idx_list[index]),
                                             mode=torchvision.io.ImageReadMode.RGB)

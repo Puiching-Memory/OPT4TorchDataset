@@ -1,5 +1,8 @@
 from functools import wraps
 import copy
+import time
+import sys
+
 def OPTInit(sampler,generator,iter):
     """
     初始化OPT缓存
@@ -19,7 +22,7 @@ def OPTInit(sampler,generator,iter):
                     )
                     )
     
-def OPTCache(cache_max=1):
+def OPTCache(cache_max=1,future_rate=0.01):
     """
     OPT缓存装饰器
     ---
@@ -32,36 +35,52 @@ def OPTCache(cache_max=1):
         @wraps(func)
         def wrapper(*args, **kwargs):
             nonlocal current,cache
-            # print(f"Arguments: {args}, Keyword Arguments: {kwargs}")
+            # print(f"[Arguments] {args} [K Arguments] {kwargs}")
             # datasetOBJ = args[0]
             input_index = args[1]
+            # start_time = time.perf_counter()
+
+            # 分支1:缓存命中,直接返回缓存中的内容
             if input_index in cache:
-                print("Cache hit")
+                current += 1
+                # print(f"[find in cache] time usage: {time.perf_counter() - start_time}")
                 return cache[input_index]
 
             # print(future_index[current])
 
+            # 缓存未命中,执行函数
             result = func(*args, **kwargs)
-
+            
+            # 分支2:缓存未满,直接添加到缓存中
             if len(cache) < cache_max:
                 cache[input_index] = result
-            else:
-                max_distance = ["key",0]
-                for k in cache.keys():
-                    try:
-                        distance = future_index.index(k, current, current + int(1000)) - current
-                    except ValueError:
-                        max_distance = [k,float("inf")]
-                        break
-                    else:  
-                        if distance > max_distance[1]:
-                            max_distance = [k,distance]
-                    
-                cache.pop(max_distance[0])
-                cache[input_index] = result
+                current += 1
+                # print(f"[NOT find in cache] cache usage: {len(cache)} {round(len(cache)/cache_max,2)}%")
+                return result
+            
+            # 分支3:缓存已满,使用OPT算法替换
+            # start_time = time.perf_counter()
+            # TODO: 滑动窗口优化
+            max_distance = ["key",0]
+            for k in cache.keys(): # 遍历缓存中的所有键,计算距离
+                # 尝试在窗口内查找,如果找不到则认为距离为inf,如果找到保留最大距离
+                try: 
+                    distance = future_index.index(k, current, current + int(1281)) - current
+                except ValueError:
+                    max_distance = [k,float("inf")]
+                    break
+                else:  
+                    if distance > max_distance[1]:
+                        max_distance = [k,distance]
+            
+            # 删除最久未使用的键，并将新结果添加到缓存中
+            cache.pop(max_distance[0])
+            cache[input_index] = result
+            # print(f"[future find] time usage: {time.perf_counter() - start_time}")
 
             current += 1
             # print(f"Result: {result}")
             return result
+        
         return wrapper
     return decorator
