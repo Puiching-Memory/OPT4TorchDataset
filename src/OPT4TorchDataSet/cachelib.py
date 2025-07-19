@@ -32,7 +32,7 @@ def OPTCache(cache_max=1):
         @wraps(func)
         def wrapper(*args, **kwargs):
             nonlocal current,cache
-            print(f"Arguments: {args}, Keyword Arguments: {kwargs}")
+            # print(f"Arguments: {args}, Keyword Arguments: {kwargs}")
             # datasetOBJ = args[0]
             input_index = args[1]
             if input_index in cache:
@@ -49,7 +49,7 @@ def OPTCache(cache_max=1):
                 max_distance = ["key",0]
                 for k in cache.keys():
                     try:
-                        distance = future_index.index(k, current, current + int(10000 * 100 * 0.0005)) - current
+                        distance = future_index.index(k, current, current + int(1000)) - current
                     except ValueError:
                         max_distance = [k,float("inf")]
                         break
@@ -61,7 +61,7 @@ def OPTCache(cache_max=1):
                 cache[input_index] = result
 
             current += 1
-            print(f"Result: {result}")
+            # print(f"Result: {result}")
             return result
         return wrapper
     return decorator

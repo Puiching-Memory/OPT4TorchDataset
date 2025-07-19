@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools","cython"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "OPT4TorchDataSet"
+dynamic = ["version"]
+authors = [
+  { name="梦归云帆", email="1138663075@qq.com" },
+]
+description = "Plug-and-Play Optimal Page Replacement Algorithm (OPT) for Torch Dataset"
+keywords = ["python","torch","dataset","OPT"]
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+dependencies = [
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+]
+
+[tool.setuptools]
+ext-modules = [
+  {name = "OPT4TorchDataSet.cachelib", sources = ["src/OPT4TorchDataSet/cachelib.py"]}
+]
+
+[tool.setuptools.dynamic]
+version = {attr = "OPT4TorchDataSet.__version__"}
+
+[project.urls]
+Homepage = "https://github.com/Puiching-Memory/OPT4TorchDataset"
+Issues = "https://github.com/Puiching-Memory/OPT4TorchDataset/issues"

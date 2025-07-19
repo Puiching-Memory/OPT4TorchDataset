@@ -13,9 +13,9 @@ apt install build-essential
 conda create -n opt4 python=3.13
 conda activate opt4
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-pip install timm huggingface-hub datasets[vision] torchmetrics
-pip install swanlab zarr nvidia-dali-cuda120 # optional
-pip install pillow==11.3.0
+pip install timm huggingface-hub datasets[vision] torchmetrics pillow==11.3.0
+pip install swanlab  # optional
+pip install zarr nvidia-dali-cuda120 # optional
 ```
 
 ## dataset
@@ -24,3 +24,9 @@ huggingface-cli download --repo-type dataset --resume-download ILSVRC/imagenet-1
 ```
 
 ## exp
+
+## build up whl
+```bash
+pip install build
+python -m build
+```

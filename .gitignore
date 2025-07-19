@@ -5,6 +5,11 @@ imagenet-1k/
 # python cache
 __pycache__/
 
+# python pakages
+*.egg-info/
+*.whl
+dist/
+
 # tools for dev
 chsrc-x64-linux
 Miniforge3-25.3.0-3-Linux-x86_64.sh
