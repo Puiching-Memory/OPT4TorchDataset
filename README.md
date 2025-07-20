@@ -1,6 +1,10 @@
 # OPT4TorchDataset
 Plug-and-Play Optimal Page Replacement Algorithm (OPT) for Torch Dataset
 
+## There's no free lunch
+this method requires a substantial amount of additional RAM. 
+If you're using a personal computer with 16GB or less memory, this may offer limited benefit to you.
+
 ## install
 ```bash
 pip install OPT4TorchDataset
@@ -61,7 +65,7 @@ if __name__ == "__main__":
         break
 ```
 
-## env
+## dev env
 ```bash
 # using ubuntu 24.04 cuda 12.8 h800 sm90
 apt update
