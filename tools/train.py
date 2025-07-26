@@ -38,13 +38,13 @@ dataset = imagenet_1k.Imagenet1K(
 )
 
 dataloader = DataLoader(dataset=dataset,
-                        batch_size=1024,
+                        batch_size=512,
                         shuffle=False, # shuffle must be False
-                        num_workers=4,
+                        num_workers=16,
                         pin_memory=True,
                         sampler=data.RandomSampler(dataset,
                                                     replacement=True,
-                                                    num_samples=len(dataset) * 3, # * batch size
+                                                    num_samples=len(dataset) * 1, # * batch size
                                                     generator=dataset.get_generator()
                                                     ),
                         )
@@ -55,7 +55,7 @@ model = timm.create_model('resnet50',
                         num_classes=1000,
                         ).to(device)
 model.train()
-model = torch.compile(model)
+#model = torch.compile(model) # FIXME: memory leak. H800 CUDA:12.8 torch:2.7.1 ubuntu:24.04 Driver:535.161.08
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
 scaler = torch.amp.GradScaler()

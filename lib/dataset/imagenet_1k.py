@@ -8,7 +8,8 @@ from torchvision.transforms import v2
 import torch
 import torchvision
 
-from cachelib import OPTCache,OPTInit
+#from cachelib import OPTCache,OPTInit
+from OPT4TorchDataSet.cachelib import OPTCache,OPTInit
 from cachetools import cached, LRUCache, LFUCache, FIFOCache, RRCache
 
 class Imagenet1K(data.Dataset):
@@ -26,11 +27,11 @@ class Imagenet1K(data.Dataset):
     def __len__(self):
         return len(self.idx_list)
 
-    @OPTCache(cache_max=128116)
-    #@cached(cache=LRUCache(maxsize=128116))
-    #@cached(cache=LFUCache(maxsize=128116))
-    #@cached(cache=FIFOCache(maxsize=128116))
-    #@cached(cache=RRCache(maxsize=128116))
+    #@OPTCache(cache_max=12811)
+    #@cached(cache=LRUCache(maxsize=12811))
+    #@cached(cache=LFUCache(maxsize=12811))
+    @cached(cache=FIFOCache(maxsize=12811))
+    #@cached(cache=RRCache(maxsize=12811))
     def __getitem__(self, index):
         image = torchvision.io.decode_image(os.path.join(self.root_dir, self.split,  self.idx_list[index]),
                                             mode=torchvision.io.ImageReadMode.RGB)

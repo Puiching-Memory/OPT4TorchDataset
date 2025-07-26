@@ -91,15 +91,22 @@ dataset: imagenet-1k
 device: NVIDIA H800 CUDA 12.8
 system: ubuntu 24.04
 
-Future Index: 1281 (1% cache)
-Cache Size: 128116 (10% dataset) (? GB RAM)
+python:3.13
+cachetools: 6.1.0
+OPT: 1.0.0
+torch: 2.7.1 compiled False
+
+Cache Size: 12811 (1% dataset) (? GB RAM) 12
 DataIter summary: 3754 (1281167)
 Epoch: 3
+num_workers: 16
+batch_size: 512
 
 ## Training Speed (one device)
-| model    | ACC | BaseLine               | OPT ON                 | LRU ON                   | LFU ON                 | FIFO ON                | RR ON                  | log |
-| -------- | --- | ---------------------- | ---------------------- | ------------------------ | ---------------------- | ---------------------- | ---------------------- | --- |
-| resnet50 |     | 01:29<1:14:37 1.21s/it | 01:29<1:13:57 1.20s/it | 01:33<1:16:42,  1.25s/it | 01:27<1:11:00 1.16s/it | 01:31<1:16:24 1.24s/it | 01:29<1:13:45 1.20s/it |     |
+
+| model    | BaseLine | OPT ON | LRU ON | LFU ON | FIFO ON | RR ON | log |
+| -------- | -------- | ------ | ------ | ------ | ------- | ----- | --- |
+| resnet50 | 50:14    | 43:31  | 44:57  | 44:55  | 44:30   | 44:41 |     |
 
 ## Training Speed (multi devices DDP)
 
@@ -113,4 +120,5 @@ Epoch: 3
 ```bash
 pip install build
 python -m build
+pip install dist/opt4torchdataset-1.0.0-cp313-cp313-linux_x86_64.whl
 ```
