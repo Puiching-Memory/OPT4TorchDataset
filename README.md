@@ -120,5 +120,5 @@ batch_size: 512
 ```bash
 pip install build
 python -m build
-pip install dist/opt4torchdataset-1.0.0-cp313-cp313-linux_x86_64.whl
+pip install dist/opt4torchdataset-1.0.0-cp313-cp313-linux_x86_64.whl --force-reinstall
 ```
