@@ -19,12 +19,6 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 
-[tool.setuptools]
-# https://setuptools.pypa.io/en/latest/userguide/ext_modules.html
-ext-modules = [
-  {name = "OPT4TorchDataSet.cachelib", sources = ["src/OPT4TorchDataSet/cachelib.py"]}
-]
-
 [tool.setuptools.dynamic]
 version = {attr = "OPT4TorchDataSet.__version__"}
 
