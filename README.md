@@ -67,23 +67,31 @@ if __name__ == "__main__":
 
 ## dev env
 ```bash
-# using ubuntu 24.04 cuda 12.8 h800 sm90
+# tested ubuntu 24.04 cuda 12.8 h800 sm90
+# tested windows11 cuda 12.9.1 NVIDIA 4060Ti sm89
 apt update
 apt upgrade
 apt install build-essential
 ```
 
 ```bash
+# set mirror (optional)
+export HF_ENDPOINT=https://hf-mirror.com
+$env:HF_ENDPOINT = "https://hf-mirror.com"
+
 conda create -n opt4 python=3.13
 conda activate opt4
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-pip install timm huggingface-hub datasets[vision] torchmetrics pillow cachetools swanlab
-pip install zarr nvidia-dali-cuda120 # optional
+pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu129
+pip install -r requirements.txt
+
+# install triton for windows(optional)
+pip install -U "triton-windows<3.5"
 ```
 
 ## dataset
 ```bash
-huggingface-cli download --repo-type dataset --resume-download ILSVRC/imagenet-1k --local-dir ./imagenet-1k --token {your_token_here}
+hf download --repo-type dataset ILSVRC/imagenet-1k --cache-dir ./data/imagenet-1k --token {your_token_here}
+hf download --repo-type dataset timm/mini-imagenet --cache-dir ./data/mini-imagenet
 ```
 
 ## experiment
