@@ -23,7 +23,6 @@ class Imagenet1K(data.Dataset):
         print(len(self.idx_list))
     def get_generator(self):
         return self.data_generator
-
     def __len__(self):
         return len(self.idx_list)
 
