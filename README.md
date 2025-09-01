@@ -96,7 +96,7 @@ hf download --repo-type dataset ILSVRC/imagenet-1k --cache-dir ./data/imagenet-1
 hf download --repo-type dataset timm/mini-imagenet --cache-dir ./data/mini-imagenet
 ```
 
-## experiment
+## experiment imagenet-1k
 dataset: imagenet-1k
 device: NVIDIA H800 CUDA 12.8
 system: ubuntu 24.04
@@ -112,19 +112,38 @@ Epoch: 3
 num_workers: 16
 batch_size: 512
 
-## Training Speed (one device)
+### Training Speed (one device)
 
 | model    | BaseLine | OPT ON | LRU ON | LFU ON | FIFO ON | RR ON | log |
 | -------- | -------- | ------ | ------ | ------ | ------- | ----- | --- |
 | resnet50 | 50:14    | 43:31  | 44:57  | 44:55  | 44:30   | 44:41 |     |
 
-## Training Speed (multi devices DDP)
+### Training Speed (multi devices DDP)
 
-
-## Hit rate
+### Hit rate
 | BaseLine | OPT ON | LRU ON |
 | -------- | ------ | ------ |
 | 0%       |
+
+## experiment timm/mini-imagenet
+dataset: mini-imagenet
+device: NVIDIA 4060TI CUDA 12.9
+system: windows11
+
+python:3.13
+cachetools: 6.2.0
+OPT: 1.0.0
+torch: 2.8.0 compiled True
+
+Cache Size: 5000 (10% dataset) (? GB RAM)
+DataIter summary: 2344 (50000)
+Epoch: 3
+num_workers: 4
+batch_size: 64
+
+| model    | BaseLine | OPT ON | LRU ON | LFU ON | FIFO ON | RR ON | log |
+| -------- | -------- | ------ | ------ | ------ | ------- | ----- | --- |
+| resnet50 | 21:59    | 43:31  | 44:57  | 44:55  | 44:30   | 44:41 |     |
 
 ## build up whl
 ```bash
