@@ -9,6 +9,7 @@ from tqdm import tqdm
 import torchmetrics
 import torchmetrics.classification
 import warnings
+import swanlab
 
 sys.path.append(os.path.abspath("./"))
 # from lib.dataset import imagenet_1k
@@ -16,6 +17,8 @@ from lib.dataset import mini_imagenet_dataloader
 
 if __name__ == "__main__":
     # print(timm.list_models())
+
+    run = swanlab.init(project="opt4")
 
     # check Device
     device = torch.device(f"cuda:0" if torch.cuda.is_available() else "cpu")
@@ -45,7 +48,7 @@ if __name__ == "__main__":
     try:
         model = torch.compile(model)
     except Exception as e:
-        print("torch.compile error:\n", e)
+        print("torch.compile error -> Skip\n", e)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
     scaler = torch.amp.GradScaler()
@@ -75,6 +78,7 @@ if __name__ == "__main__":
 
         progress.update()
         progress.set_description(f"Loss: {loss_value.item():.4f} ACC: {acc.item():.4f} AUROC: {auroc.item():.4f} AP: {ap.item():.4f}")
+        swanlab.log({"loss": loss_value.item(), "ACC": acc.item(), "AUROC": auroc.item(), "AP": ap.item()})
         # break
 
     progress.close()
@@ -119,5 +123,6 @@ if __name__ == "__main__":
     auroc = metricAuroc.compute()
     ap = metricAP.compute()
     print(f"ACC: {acc:.4f} AUROC: {auroc:.4f} AP: {ap:.4f}")
+    swanlab.log({"val_ACC": acc.item(), "val_AUROC": auroc.item(), "val_AP": ap.item()})
 
 

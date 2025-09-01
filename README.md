@@ -72,9 +72,7 @@ if __name__ == "__main__":
 apt update
 apt upgrade
 apt install build-essential
-```
 
-```bash
 # set mirror (optional)
 export HF_ENDPOINT=https://hf-mirror.com
 $env:HF_ENDPOINT = "https://hf-mirror.com"
@@ -86,6 +84,10 @@ pip install -r requirements.txt
 
 # install triton for windows(optional)
 pip install -U "triton-windows<3.5"
+
+# login swanlab (optional)
+swanlab login
+# then following https://docs.swanlab.cn/guide_cloud/general/quick-start.html
 ```
 
 ## dataset
