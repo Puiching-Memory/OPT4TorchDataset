@@ -36,6 +36,11 @@ class MiniImageNetDataset(Dataset):
     def __len__(self):
         return len(self.dataset)
 
+    #@OPTCache(cache_max=500)
+    #@cached(cache=LRUCache(maxsize=500))
+    #@cached(cache=LFUCache(maxsize=500))
+    @cached(cache=FIFOCache(maxsize=5000))
+    #@cached(cache=RRCache(maxsize=500))
     def __getitem__(self, idx):
         item = self.dataset[idx]
     

@@ -10,6 +10,7 @@ import torchmetrics
 import torchmetrics.classification
 import warnings
 import swanlab
+import datetime
 
 sys.path.append(os.path.abspath("./"))
 # from lib.dataset import imagenet_1k
@@ -18,13 +19,15 @@ from lib.dataset import mini_imagenet_dataloader
 if __name__ == "__main__":
     # print(timm.list_models())
 
-    run = swanlab.init(project="opt4")
+    run = swanlab.init(project="opt4",
+                       experiment_name=f"mini_imagenet-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}")
 
     # check Device
     device = torch.device(f"cuda:0" if torch.cuda.is_available() else "cpu")
 
     dataset = mini_imagenet_dataloader.MiniImageNetDataset(split='train')
 
+    epoch_size = 3
     dataloader = DataLoader(dataset=dataset,
                             batch_size=64,
                             shuffle=False, # shuffle must be False
@@ -32,7 +35,7 @@ if __name__ == "__main__":
                             pin_memory=True,
                             sampler=data.RandomSampler(dataset,
                                                         replacement=True,
-                                                        num_samples=len(dataset) * 1, # * batch size
+                                                        num_samples=len(dataset) * epoch_size,
                                                         generator=dataset.get_generator()
                                                         ),
                             )
