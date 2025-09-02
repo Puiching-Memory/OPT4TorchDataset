@@ -73,10 +73,6 @@ apt update
 apt upgrade
 apt install build-essential
 
-# set mirror (optional)
-export HF_ENDPOINT=https://hf-mirror.com
-$env:HF_ENDPOINT = "https://hf-mirror.com"
-
 conda create -n opt4 python=3.13
 conda activate opt4
 pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu129
@@ -88,6 +84,13 @@ pip install -U "triton-windows<3.5"
 # login swanlab (optional)
 swanlab login
 # then following https://docs.swanlab.cn/guide_cloud/general/quick-start.html
+
+# choice device (optional)
+export CUDA_VISIBLE_DEVICES=2
+
+# set mirror (optional)
+export HF_ENDPOINT=https://hf-mirror.com
+$env:HF_ENDPOINT = "https://hf-mirror.com"
 ```
 
 ## dataset
@@ -96,54 +99,31 @@ hf download --repo-type dataset ILSVRC/imagenet-1k --cache-dir ./data/imagenet-1
 hf download --repo-type dataset timm/mini-imagenet --cache-dir ./data/mini-imagenet
 ```
 
-## experiment imagenet-1k
-dataset: imagenet-1k
-device: NVIDIA H800 CUDA 12.8
+## experiment timm/mini-imagenet
+dataset: mini-imagenet
+device: NVIDIA H800 sm90 CUDA 12.9
 system: ubuntu 24.04
-
 python:3.13
-cachetools: 6.1.0
+cachetools: 6.2.0
 OPT: 1.0.0
-torch: 2.7.1 compiled False
-
-Cache Size: 12811 (1% dataset) (? GB RAM) 12
-DataIter summary: 3754 (1281167)
+torch: 2.8.0 compiled True
+Cache Size: 25000 (50% dataset) (? GB RAM)
+DataIter summary: 293 (50000)
 Epoch: 3
 num_workers: 16
 batch_size: 512
 
 ### Training Speed (one device)
 
-| model    | BaseLine | OPT ON | LRU ON | LFU ON | FIFO ON | RR ON | log |
-| -------- | -------- | ------ | ------ | ------ | ------- | ----- | --- |
-| resnet50 | 50:14    | 43:31  | 44:57  | 44:55  | 44:30   | 44:41 |     |
+| model    | BaseLine | OPT ON | LRU ON | LFU ON | FIFO ON | RR ON | log                                          |
+| -------- | -------- | ------ | ------ | ------ | ------- | ----- | -------------------------------------------- |
+| resnet50 | 2:27     | 1:41   | 1:54   | 1:49   | 1:51    | 1:52  | https://swanlab.cn/@Sail2Dream/opt4/overview |
 
 ### Training Speed (multi devices DDP)
 
 ### Hit rate
-| BaseLine | OPT ON | LRU ON |
-| -------- | ------ | ------ |
-| 0%       |
 
-## experiment timm/mini-imagenet
-dataset: mini-imagenet
-device: NVIDIA 4060TI CUDA 12.9
-system: windows11
-
-python:3.13
-cachetools: 6.2.0
-OPT: 1.0.0
-torch: 2.8.0 compiled True
-
-Cache Size: 5000 (10% dataset) (? GB RAM)
-DataIter summary: 2344 (50000)
-Epoch: 3
-num_workers: 4
-batch_size: 64
-
-| model    | BaseLine | OPT ON | LRU ON | LFU ON | FIFO ON | RR ON | log |
-| -------- | -------- | ------ | ------ | ------ | ------- | ----- | --- |
-| resnet50 | 21:59    | 43:31  | 44:57  | 44:55  | 44:30   | 44:41 |     |
+### eval
 
 ## build up whl
 ```bash

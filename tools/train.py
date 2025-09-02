@@ -29,9 +29,9 @@ if __name__ == "__main__":
 
     epoch_size = 3
     dataloader = DataLoader(dataset=dataset,
-                            batch_size=64,
+                            batch_size=512,
                             shuffle=False, # shuffle must be False
-                            num_workers=4,
+                            num_workers=16,
                             pin_memory=True,
                             sampler=data.RandomSampler(dataset,
                                                         replacement=True,
@@ -54,7 +54,7 @@ if __name__ == "__main__":
         print("torch.compile error -> Skip\n", e)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
-    scaler = torch.amp.GradScaler()
+    scaler = torch.amp.GradScaler("cuda")
     loss = torch.nn.CrossEntropyLoss()
 
     metricACC = torchmetrics.classification.Accuracy(task="multiclass",num_classes=100).to(device)
@@ -93,7 +93,7 @@ if __name__ == "__main__":
     dataloader = DataLoader(dataset=dataset,
                             batch_size=64,
                             shuffle=True,
-                            num_workers=4,
+                            num_workers=16,
                             pin_memory=True,
                             drop_last=True,
                             )

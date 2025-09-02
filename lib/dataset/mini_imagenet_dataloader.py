@@ -1,6 +1,6 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
-from datasets import load_dataset
+from datasets import load_dataset, Image
 from torchvision.transforms import v2
 from cachetools import cached, LRUCache, LFUCache, FIFOCache, RRCache
 import torch.utils.data as data
@@ -12,17 +12,13 @@ sys.path.append(os.path.abspath("src/OPT4TorchDataSet"))
 from cachelib import OPTCache,OPTInit
 #from OPT4TorchDataSet.cachelib import OPTCache,OPTInit
 
-def rgba2rgb(x):
-    return x[:3] if x.shape[0] == 4 else x
-
 class MiniImageNetDataset(Dataset):
     def __init__(self, split='train'):
         # 加载Hugging Face数据集
-        self.dataset = load_dataset('timm/mini-imagenet', cache_dir='./data/mini-imagenet')
-        self.dataset = self.dataset[split] # Available splits: ['test', 'train', 'validation']
+        self.dataset = load_dataset('timm/mini-imagenet', cache_dir='./data/mini-imagenet',split=split)
+        self.dataset = self.dataset.cast_column("image", Image(mode="RGB"))
         self.transforms = v2.Compose([
             v2.ToImage(),
-            v2.Lambda(rgba2rgb),
             v2.ToDtype(torch.float32, scale=True),
             v2.Resize((224, 224)),
             v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
@@ -36,11 +32,11 @@ class MiniImageNetDataset(Dataset):
     def __len__(self):
         return len(self.dataset)
 
-    #@OPTCache(cache_max=500)
-    #@cached(cache=LRUCache(maxsize=500))
-    #@cached(cache=LFUCache(maxsize=500))
-    @cached(cache=FIFOCache(maxsize=5000))
-    #@cached(cache=RRCache(maxsize=500))
+    @OPTCache(cache_max=25000)
+    #@cached(cache=LRUCache(maxsize=25000))
+    #@cached(cache=LFUCache(maxsize=25000))
+    #@cached(cache=FIFOCache(maxsize=25000))
+    #@cached(cache=RRCache(maxsize=25000))
     def __getitem__(self, idx):
         item = self.dataset[idx]
     
