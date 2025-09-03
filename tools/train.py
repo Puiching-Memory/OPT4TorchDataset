@@ -11,27 +11,35 @@ import torchmetrics.classification
 import warnings
 import swanlab
 import datetime
+from typing import cast
 
 sys.path.append(os.path.abspath("./"))
 # from lib.dataset import imagenet_1k
 from lib.dataset import mini_imagenet_dataloader
 
 if __name__ == "__main__":
-    # print(timm.list_models())
+    print(timm.list_models())
 
-    run = swanlab.init(project="opt4",
-                       experiment_name=f"mini_imagenet-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}")
+    # experiment / run configuration (used for naming and reproducibility)
+    dataset_name = "mini-imagenet"
+    model_name = "deit3_small_patch16_224"
+    batch_size = 512
+    lr = 1e-3
+    epoch_size = 10
+    num_workers = 16
+    lr_str = f"{lr:.0e}"
+    experiment_name = f"{dataset_name}_{model_name}_bs{batch_size}_lr{lr_str}_ep{epoch_size}"
 
-    # check Device
-    device = torch.device(f"cuda:0" if torch.cuda.is_available() else "cpu")
+    run = swanlab.init(project="opt4", experiment_name=experiment_name)
+    
+    device = torch.device(f"cuda" if torch.cuda.is_available() else "cpu")
 
     dataset = mini_imagenet_dataloader.MiniImageNetDataset(split='train')
 
-    epoch_size = 3
     dataloader = DataLoader(dataset=dataset,
-                            batch_size=512,
+                            batch_size=batch_size,
                             shuffle=False, # shuffle must be False
-                            num_workers=16,
+                            num_workers=num_workers,
                             pin_memory=True,
                             sampler=data.RandomSampler(dataset,
                                                         replacement=True,
@@ -40,7 +48,7 @@ if __name__ == "__main__":
                                                         ),
                             )
 
-    model = timm.create_model('resnet50',
+    model = timm.create_model(model_name,
                             pretrained=True,
                             cache_dir="./models/",
                             num_classes=100,
@@ -49,12 +57,14 @@ if __name__ == "__main__":
 
     # FIXME: memory leak. H800 CUDA:12.8 torch:2.7.1 ubuntu:24.04 Driver:535.161.08
     try:
-        model = torch.compile(model)
+        compiled = torch.compile(model)
+        # help static type checkers: treat compiled object as Module for downstream calls
+        model = cast(torch.nn.Module, compiled)
     except Exception as e:
         print("torch.compile error -> Skip\n", e)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
-    scaler = torch.amp.GradScaler("cuda")
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+    scaler = torch.cuda.amp.GradScaler()
     loss = torch.nn.CrossEntropyLoss()
 
     metricACC = torchmetrics.classification.Accuracy(task="multiclass",num_classes=100).to(device)
@@ -91,9 +101,9 @@ if __name__ == "__main__":
 
     dataset = mini_imagenet_dataloader.MiniImageNetDataset(split='validation')
     dataloader = DataLoader(dataset=dataset,
-                            batch_size=64,
+                            batch_size=batch_size,
                             shuffle=True,
-                            num_workers=16,
+                            num_workers=num_workers,
                             pin_memory=True,
                             drop_last=True,
                             )

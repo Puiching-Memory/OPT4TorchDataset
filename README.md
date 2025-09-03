@@ -1,16 +1,16 @@
 # OPT4TorchDataset
 Plug-and-Play Optimal Page Replacement Algorithm (OPT) for Torch Dataset
 
-## There's no free lunch
-this method requires a substantial amount of additional RAM. 
-If you're using a personal computer with 16GB or less memory, this may offer limited benefit to you.
+## What is OPT?
 
-## install
+## Why OPT work?
+
+## Install
 ```bash
 pip install OPT4TorchDataset
 ```
 
-## usage
+## Usage
 ```python
 import torch,torchvision
 import torch.utils.data as data
@@ -65,7 +65,7 @@ if __name__ == "__main__":
         break
 ```
 
-## dev env
+## Environment (for development only)
 ```bash
 # tested ubuntu 24.04 cuda 12.8 h800 sm90
 # tested windows11 cuda 12.9.1 NVIDIA 4060Ti sm89
@@ -93,37 +93,64 @@ export HF_ENDPOINT=https://hf-mirror.com
 $env:HF_ENDPOINT = "https://hf-mirror.com"
 ```
 
-## dataset
+## Dataset
 ```bash
 hf download --repo-type dataset ILSVRC/imagenet-1k --cache-dir ./data/imagenet-1k --token {your_token_here}
 hf download --repo-type dataset timm/mini-imagenet --cache-dir ./data/mini-imagenet
 ```
 
-## experiment timm/mini-imagenet
+## Experiment timm/mini-imagenet
 dataset: mini-imagenet
 device: NVIDIA H800 sm90 CUDA 12.9
 system: ubuntu 24.04
-python:3.13
+python: 3.13.5
 cachetools: 6.2.0
 OPT: 1.0.0
 torch: 2.8.0 compiled True
-Cache Size: 25000 (50% dataset) (? GB RAM)
-DataIter summary: 293 (50000)
-Epoch: 3
+seed: 0
+DataIter summary: 977 (50000)
+Epoch: 10
 num_workers: 16
 batch_size: 512
 
-### Training Speed (one device)
+### Training Speed - Method (one device)
 
-| model    | BaseLine | OPT ON | LRU ON | LFU ON | FIFO ON | RR ON | log                                          |
-| -------- | -------- | ------ | ------ | ------ | ------- | ----- | -------------------------------------------- |
-| resnet50 | 2:27     | 1:41   | 1:54   | 1:49   | 1:51    | 1:52  | https://swanlab.cn/@Sail2Dream/opt4/overview |
+Cache Size: 25000 (50% dataset) (? GB RAM)
 
-### Training Speed (multi devices DDP)
+| model                   | BaseLine | OPT ON | LRU ON | LFU ON | FIFO ON | RR ON |
+| ----------------------- | -------- | ------ | ------ | ------ | ------- | ----- |
+| resnet50                | 5:21±    | 4:36±  | 4:44±  | 4:44±  | 4:41±   | 4:47± |
+| efficientnet_b0         | 5:34±    | 4:46±  | 4:49±  | 4:50±  | 4:59±   | 4:52± |
+| mobilenetv4_conv_small  | 5:07±    | 3:12±  | 3:16±  | 3:14±  | 3:16±   | 3:15± |
+| convnext_base           | 6:54±    | 6:10±  | 6:14±  | 6:23±  | 6:18±   | 6:10± |
+| deit3_small_patch16_224 | 4:33±    | 3:17±  | 3:15±  | 3:16±  | 3:13±   | 3:16± |
+| vit                     |          |        |        |        |         |       |
+| swin                    |          |        |        |        |         |       |
 
-### Hit rate
 
-### eval
+log:https://swanlab.cn/@Sail2Dream/opt4/overview
+
+### Training Speed - Method (multi devices DDP)
+
+### Hit rate - Method
+
+### Hit rate - Cache Size
+
+### Hit rate - Memory
+
+## Analysis of additional RAM usage
+this method requires a substantial amount of additional RAM. 
+If you're using a personal computer with 16GB or less memory, this may offer limited benefit to you.
+
+## Why OPT NOT work?
+思路：建立简单的访问模型（Zipf/Markov），分析在何种分布下 OPT 明显优于 LRU/LFU，给出上界/下界或渐近分析。
+创新点：提供理论或半理论解释，减少“纯工程”质疑。
+验证：对 synthetic traces（Zipf α 不同, Markov 转移）跑仿真并绘制空间/命中率曲线。
+MVP：一页数学推导 + 一套仿真实验图（heatmap）。
+产出：补充材料中的理论段落和 synthetic results。
+
+## Limitations
+
 
 ## build up whl
 ```bash
