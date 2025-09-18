@@ -107,6 +107,7 @@ python: 3.13.5
 cachetools: 6.2.0
 OPT: 1.0.0
 torch: 2.8.0 compiled True
+cython: OFF
 seed: 0
 DataIter summary: 977 (50000)
 Epoch: 10
@@ -117,30 +118,29 @@ batch_size: 512
 
 Cache Size: 25000 (50% dataset) (? GB RAM)
 
-| model                   | BaseLine | OPT ON | LRU ON | LFU ON | FIFO ON | RR ON |
-| ----------------------- | -------- | ------ | ------ | ------ | ------- | ----- |
-| resnet50                | 5:21±    | 4:36±  | 4:44±  | 4:44±  | 4:41±   | 4:47± |
-| efficientnet_b0         | 5:34±    | 4:46±  | 4:49±  | 4:50±  | 4:59±   | 4:52± |
-| mobilenetv4_conv_small  | 5:07±    | 3:12±  | 3:16±  | 3:14±  | 3:16±   | 3:15± |
-| convnext_base           | 6:54±    | 6:10±  | 6:14±  | 6:23±  | 6:18±   | 6:10± |
-| deit3_small_patch16_224 | 4:33±    | 3:17±  | 3:15±  | 3:16±  | 3:13±   | 3:16± |
-| vit                     |          |        |        |        |         |       |
-| swin                    |          |        |        |        |         |       |
+| model                        | BaseLine | OPT ON | LRU ON | LFU ON | FIFO ON | RR ON |
+| ---------------------------- | -------- | ------ | ------ | ------ | ------- | ----- |
+| resnet50                     | 5:21±    | 4:36±  | 4:44±  | 4:44±  | 4:41±   | 4:47± |
+| efficientnet_b0              | 5:34±    | 4:46±  | 4:49±  | 4:50±  | 4:59±   | 4:52± |
+| mobilenetv4_conv_small       | 5:07±    | 3:12±  | 3:16±  | 3:14±  | 3:16±   | 3:15± |
+| convnext_base                | 6:54±    | 6:10±  | 6:14±  | 6:23±  | 6:18±   | 6:10± |
+| deit3_small_patch16_224      | 4:33±    | 3:17±  | 3:15±  | 3:16±  | 3:13±   | 3:16± |
+| vit_small_patch8_224         |          |        |        |        |         |       |
+| swin_tiny_patch4_window7_224 |          |        |        |        |         |       |
 
 
 log:https://swanlab.cn/@Sail2Dream/opt4/overview
 
+## Experiment CIFAR-10
+
+## Experiment MLP
+
 ### Training Speed - Method (multi devices DDP)
+TODO
 
 ### Hit rate - Method
 
 ### Hit rate - Cache Size
-
-### Hit rate - Memory
-
-## Analysis of additional RAM usage
-this method requires a substantial amount of additional RAM. 
-If you're using a personal computer with 16GB or less memory, this may offer limited benefit to you.
 
 ## Why OPT NOT work?
 思路：建立简单的访问模型（Zipf/Markov），分析在何种分布下 OPT 明显优于 LRU/LFU，给出上界/下界或渐近分析。
@@ -148,8 +148,6 @@ If you're using a personal computer with 16GB or less memory, this may offer lim
 验证：对 synthetic traces（Zipf α 不同, Markov 转移）跑仿真并绘制空间/命中率曲线。
 MVP：一页数学推导 + 一套仿真实验图（heatmap）。
 产出：补充材料中的理论段落和 synthetic results。
-
-## Limitations
 
 
 ## build up whl

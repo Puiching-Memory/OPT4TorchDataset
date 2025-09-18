@@ -22,7 +22,7 @@ if __name__ == "__main__":
 
     # experiment / run configuration (used for naming and reproducibility)
     dataset_name = "mini-imagenet"
-    model_name = "deit3_small_patch16_224"
+    model_name = "vit_small_patch8_224"
     batch_size = 512
     lr = 1e-3
     epoch_size = 10
@@ -30,7 +30,14 @@ if __name__ == "__main__":
     lr_str = f"{lr:.0e}"
     experiment_name = f"{dataset_name}_{model_name}_bs{batch_size}_lr{lr_str}_ep{epoch_size}"
 
-    run = swanlab.init(project="opt4", experiment_name=experiment_name)
+    class _NoopRun:
+        def log(self, *args, **kwargs):
+            print("[swanlab-fallback]", args if args else kwargs)
+    try:
+        run = swanlab.init(project="opt4", experiment_name=experiment_name)
+    except Exception as e:
+        print("swanlab.init error:", repr(e))
+        run = _NoopRun()
     
     device = torch.device(f"cuda" if torch.cuda.is_available() else "cpu")
 
