@@ -5,3 +5,5 @@ cachetools
 swanlab
 loguru
 datasets
+matplotlib
+tqdm
