@@ -125,8 +125,8 @@ Cache Size: 25000 (50% dataset) (? GB RAM)
 | mobilenetv4_conv_small       | 5:07±    | 3:12±  | 3:16±  | 3:14±  | 3:16±   | 3:15± |
 | convnext_base                | 6:54±    | 6:10±  | 6:14±  | 6:23±  | 6:18±   | 6:10± |
 | deit3_small_patch16_224      | 4:33±    | 3:17±  | 3:15±  | 3:16±  | 3:13±   | 3:16± |
-| vit_small_patch8_224         |          |        |        |        |         |       |
-| swin_tiny_patch4_window7_224 |          |        |        |        |         |       |
+| vit_small_patch8_224         | 6:36±    | 6:58±  | 6:33±  | 6:35±  | 6:39±   | 6:41± |
+| swin_tiny_patch4_window7_224 | 4:09±    | 4:08±  | 3:59±  | 4:03±  | 3:59±   | 6:21± |
 
 
 log:https://swanlab.cn/@Sail2Dream/opt4/overview
