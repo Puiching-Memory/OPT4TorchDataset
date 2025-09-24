@@ -1,165 +1,186 @@
-import heapq
-import copy
+import math
+from collections import defaultdict
 from functools import wraps
+from typing import Any, Callable, Dict, List, Optional
 
+__all__ = [
+    "OPTContext",
+    "OPTCacheDecorator",
+    "make_opt_cache",  # 工厂函数
+]
 
-class OptimalCache:
-    """
-    OPT缓存实现
-    复杂度为O(log n)
-    """
-    
-    def __init__(self, capacity, future_access_map):
-        self.capacity = capacity
-        self.cache = {}
-        self.future_access = future_access_map  # key -> [future_positions...]
-        self.current_time = 0
-        # 优先队列: (-next_access_time, insertion_order, key)
-        # 使用负时间实现最大堆行为（最远访问优先）
-        self.replacement_heap = []
-        self._insertion_order = 0
-        
-    def get(self, key):
-        """如果存在，从缓存中获取项目"""
-        if key in self.cache:
-            self.current_time += 1
-            return self.cache[key]
-        return None
-    
-    def put(self, key, value):
-        """将项目放入缓存，必要时进行驱逐"""
-        if key in self.cache:
-            # 更新现有条目
-            self.cache[key] = value
-            self.current_time += 1
-            return
-            
-        if len(self.cache) >= self.capacity:
-            self._evict_optimal()
-            
-        self.cache[key] = value
-        self._add_to_heap(key)
-        self.current_time += 1
-    
-    def _add_to_heap(self, key):
-        """将键和下一次访问时间添加到替换堆中"""
-        next_access = self._get_next_access_time(key)
-        self._insertion_order += 1
-        heapq.heappush(self.replacement_heap, 
-                      (-next_access, self._insertion_order, key))
-    
-    def _get_next_access_time(self, key):
-        """获取键的下一次访问时间，如果不再访问则返回无穷大"""
-        if key not in self.future_access:
-            return float('inf')
-        
-        accesses = self.future_access[key]
-        # 使用二分查找替代线性搜索
-        left, right = 0, len(accesses)
-        while left < right:
-            mid = (left + right) // 2
-            if accesses[mid] > self.current_time:
-                right = mid
-            else:
-                left = mid + 1
-        
-        # 如果找到了下一个访问时间
-        if left < len(accesses):
-            return accesses[left]
-        return float('inf')
-    
-    def _evict_optimal(self):
-        """
-        驱逐未来最远访问的键 - O(log n)
-        这是OPT算法的核心
-        """
-        while self.replacement_heap:
-            neg_next_access, _, key = heapq.heappop(self.replacement_heap)
-            
-            # 如果键已不在缓存中则跳过（延迟删除）
-            if key not in self.cache:
-                continue
-                
-            # 验证这仍然是正确的下一次访问时间
-            actual_next = self._get_next_access_time(key)
-            if actual_next == -neg_next_access:
-                del self.cache[key]
-                return
-            else:
-                # 仅当键仍在缓存中且访问时间有效时才重新添加
-                if key in self.cache and actual_next != float('inf'):
-                    self._insertion_order += 1
-                    heapq.heappush(self.replacement_heap, 
-                                  (-actual_next, self._insertion_order, key))
-        
-        # 后备方案：如果堆损坏则删除任意键
-        if self.cache:
-            key = next(iter(self.cache))
-            del self.cache[key]
+class OPTContext:
+    """管理 *未来访问序列* 的上下文, 消除原实现中的全局变量。
 
+    典型使用:
+        ctx = OPTContext(sampler, generator, total_iter)
+        @OPTCacheDecorator(ctx, maxsize=256)
+        def get_item(ds, idx): ...
 
-def OPTInit(sampler, generator, iter):
+    线程/进程: 当前为单实例非线程安全, 多 worker 请为每个 worker 各建一份。
     """
-    使用未来的访问模式初始化OPT缓存
-    
-    返回预处理的未来访问映射供新API使用
-    """
-    generator = copy.deepcopy(generator)
-    future_index = list(
-        sampler([None] * iter,
+
+    def __init__(self, sampler, generator, total_iter: int):
+        # 不再 deepcopy, 假设外部生成器种子已固定；如需隔离可在外部 clone。
+        future_index = list(
+            sampler(
+                [None] * total_iter,
                 replacement=True,
-                num_samples=iter,
-                generator=generator)
-    )
-    
-    # 预处理future_index为key -> 访问时间列表
-    future_map = {}
-    for idx, key in enumerate(future_index):
-        if key not in future_map:
-            future_map[key] = []
-        future_map[key].append(idx)
-    
-    return future_map
+                num_samples=total_iter,
+                generator=generator,
+            )
+        )
+        future_map: Dict[Any, List[int]] = defaultdict(list)
+        for pos, k in enumerate(future_index):
+            future_map[k].append(pos)
 
+        self.future_index: List[int] = future_index
+        self.future_map: Dict[Any, List[int]] = future_map
+        # key -> pointer (下一次尚未消费的位置在 positions 列表中的下标)
+        self.future_ptr: Dict[Any, int] = defaultdict(int)
+        self.total_iter = total_iter
 
-def OPTCache(cache_max=1):
+    def next_occurrence_distance(self, key: Any, current: int) -> Optional[int]:
+        """返回 key 距离 current 的下一次出现距离; 若不再出现返回 None.
+        通过推进 self.future_ptr[key] 指针实现摊销 O(1)。"""
+        positions = self.future_map.get(key, [])
+        ptr = self.future_ptr[key]
+        # 跳过已过去的位置
+        while ptr < len(positions) and positions[ptr] < current:
+            ptr += 1
+        self.future_ptr[key] = ptr
+        if ptr >= len(positions):
+            return None
+        return positions[ptr] - current
+
+class OPTCacheDecorator:
+    """为函数提供 Belady (OPT) 最优缓存淘汰的装饰器(实例化形式)。
+
+    与原 @OPTCache 不同之处:
+        1. 不使用模块级全局状态; 由 OPTContext 提供未来序列。
+        2. 支持 stats() / reset()。
+        3. 可选 assert_alignment 检查访问序列是否与预生成一致。
     """
-    OPT缓存装饰器
-    """
-    # 这将在第一次调用时设置
-    cache_instance = None
-    
-    def decorator(func):
+
+    def __init__(
+        self,
+        context: OPTContext,
+        maxsize: int = 1,
+        *,
+        assert_alignment: bool = False,
+        name: Optional[str] = None,
+    ) -> None:
+        if maxsize <= 0:
+            raise ValueError("maxsize 必须为正整数")
+        self.ctx = context
+        self.maxsize = maxsize
+        self.assert_alignment = assert_alignment
+        self.name = name or f"OPTCache[{id(self)}]"
+
+        # 运行期状态
+        self._current: int = 0  # 已访问次数 (相当于未来序列当前位置)
+        self._cache: Dict[Any, Any] = {}
+        # 统计
+        self._hits: int = 0
+        self._miss: int = 0
+        self._evict: int = 0
+        self._future_exhaust: int = 0  # 遇到 key 无未来访问时淘汰
+
+    # ---------------- Public API ----------------
+    def stats(self) -> Dict[str, Any]:  # 简易统计
+        total = self._hits + self._miss
+        hit_rate = (self._hits / total) if total else 0.0
+        return {
+            "name": self.name,
+            "current": self._current,
+            "size": len(self._cache),
+            "capacity": self.maxsize,
+            "hits": self._hits,
+            "miss": self._miss,
+            "evict": self._evict,
+            "future_exhaust": self._future_exhaust,
+            "hit_rate": hit_rate,
+        }
+
+    def reset_runtime(self) -> None:
+        """不重建未来序列, 仅清理缓存与指针 (实验/测试用途)。"""
+        self._current = 0
+        self._cache.clear()
+        self._hits = self._miss = self._evict = self._future_exhaust = 0
+        # 重置所有指针
+        for k in list(self.ctx.future_ptr.keys()):
+            self.ctx.future_ptr[k] = 0
+
+    # 作为装饰器使用
+    def __call__(self, func: Callable):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            nonlocal cache_instance
-            
-            # 第一次调用时延迟初始化
-            if cache_instance is None:
-                # 尝试从kwargs或args获取future_access_map
-                future_access_map = kwargs.get('future_access_map')
-                if future_access_map is None and len(args) > 2 and isinstance(args[2], dict):
-                    future_access_map = args[2]
-                elif future_access_map is None:
-                    future_access_map = {}
-                    
-                cache_instance = OptimalCache(cache_max, future_access_map)
-            
-            # 确保参数足够
-            if len(args) < 2:
-                return func(*args, **kwargs)
-                
-            input_index = args[1]
-            
-            # 先尝试缓存
-            result = cache_instance.get(input_index)
-            if result is not None:
+            if self._current >= self.ctx.total_iter:
+                raise IndexError(
+                    f"访问次数超过预生成未来序列长度 total_iter={self.ctx.total_iter}"
+                )
+
+            # 默认约定: args[1] 为 key / index
+            try:
+                input_index = args[1]
+            except IndexError:  # 兼容只传 key 的函数
+                raise ValueError("被装饰函数需要至少两个参数: (self_or_obj, index)")
+
+            if self.assert_alignment:
+                expected = self.ctx.future_index[self._current]
+                if expected != input_index:
+                    raise AssertionError(
+                        f"访问序列不对齐: position={self._current}, expected={expected}, got={input_index}"
+                    )
+
+            # 命中
+            if input_index in self._cache:
+                self._hits += 1
+                result = self._cache[input_index]
+                self._current += 1
                 return result
-            
-            # 缓存未命中：计算并存储
+
+            # 未命中 -> 真实计算
+            self._miss += 1
             result = func(*args, **kwargs)
-            cache_instance.put(input_index, result)
+
+            # 缓存未满
+            if len(self._cache) < self.maxsize:
+                self._cache[input_index] = result
+                self._current += 1
+                return result
+
+            # 缓存已满 -> Belady 选择
+            victim_key = None
+            victim_distance = -1  # 最大距离
+            for k in self._cache.keys():
+                dist = self.ctx.next_occurrence_distance(k, self._current)
+                if dist is None:  # 不再出现, 立即选择
+                    victim_key = k
+                    victim_distance = math.inf
+                    self._future_exhaust += 1
+                    break
+                if dist > victim_distance:
+                    victim_key = k
+                    victim_distance = dist
+
+            # 淘汰与插入
+            if victim_key is not None:
+                self._cache.pop(victim_key, None)
+                self._evict += 1
+            self._cache[input_index] = result
+            self._current += 1
             return result
-        
+
         return wrapper
-    return decorator
+
+def make_opt_cache(sampler, generator, total_iter: int, *, maxsize: int, assert_alignment: bool = False, name: Optional[str] = None) -> OPTCacheDecorator:
+    """工厂: 一步创建上下文 + 装饰器实例。
+
+    示例:
+        opt_cache = make_opt_cache(sampler, gen, N, maxsize=256)
+        @opt_cache
+        def get_item(ds, idx): ...
+    """
+    ctx = OPTContext(sampler, generator, total_iter)
+    return OPTCacheDecorator(ctx, maxsize=maxsize, assert_alignment=assert_alignment, name=name)

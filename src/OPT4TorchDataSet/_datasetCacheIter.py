@@ -9,7 +9,7 @@ from functools import lru_cache
 from cachetools import cached, LRUCache, FIFOCache, LFUCache, RRCache
 
 sys.path.append(os.path.abspath("./"))
-from lib.datasets._optcache import OptCache
+#from lib.datasets._optcache import OptCache
 import random
 from collections import OrderedDict
 from tqdm import tqdm

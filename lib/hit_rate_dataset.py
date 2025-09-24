@@ -1,23 +1,14 @@
 import types
-import torch
 from torch.utils.data import Dataset, DataLoader, RandomSampler
-import os
-import sys
-from cachetools import cached, LRUCache, LFUCache, FIFOCache, RRCache
-
-
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-SRC = os.path.join(ROOT, 'src')
-if SRC not in sys.path:
-    sys.path.insert(0, SRC)
+import torch
 
 class HitRateDataset(Dataset):
-    def __init__(self):
+    def __init__(self, size=10000):
         self.miss = 0
-        self.dataset = range(10000)
-        self.data_generator = torch.Generator()
-        self.data_generator.manual_seed(0)
+        self.dataset = list(range(size))
         self._getitem_impl = types.MethodType(self._raw_getitem, self)
+        self._generator = torch.Generator()
+        self._generator.manual_seed(0)
 
     def __len__(self):
         return len(self.dataset)
@@ -31,18 +22,20 @@ class HitRateDataset(Dataset):
 
     def getMissCount(self):
         return self.miss
-
-    def getGenerator(self):
-        return self.data_generator
     
+    def resetMissCount(self):
+        self.miss = 0
+
     def setCache(self, cacheMethod):
         wrapped = cacheMethod(self._raw_getitem)
         self._getitem_impl = types.MethodType(wrapped, self)
 
-    def resetMissCount(self):
-        self.miss = 0
+    def getGenerator(self):
+        return self._generator
+
 
 if __name__ == "__main__":
+    from cachetools import cached, LRUCache, LFUCache, FIFOCache, RRCache
     train_dataset = HitRateDataset()
     train_dataset.setCache(cached(LFUCache(maxsize=int(10000 * 0.5))))
 
