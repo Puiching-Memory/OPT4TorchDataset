@@ -10,18 +10,9 @@ __all__ = [
 ]
 
 class OPTContext:
-    """管理 *未来访问序列* 的上下文, 消除原实现中的全局变量。
+    """未来访问序列上下文 (无全局状态)。"""
 
-    典型使用:
-        ctx = OPTContext(sampler, generator, total_iter)
-        @OPTCacheDecorator(ctx, maxsize=256)
-        def get_item(ds, idx): ...
-
-    线程/进程: 当前为单实例非线程安全, 多 worker 请为每个 worker 各建一份。
-    """
-
-    def __init__(self, sampler, generator, total_iter: int):
-        # 不再 deepcopy, 假设外部生成器种子已固定；如需隔离可在外部 clone。
+    def __init__(self, sampler, generator, total_iter: int, prediction_window: int):
         future_index = list(
             sampler(
                 [None] * total_iter,
@@ -39,10 +30,10 @@ class OPTContext:
         # key -> pointer (下一次尚未消费的位置在 positions 列表中的下标)
         self.future_ptr: Dict[Any, int] = defaultdict(int)
         self.total_iter = total_iter
+        self.prediction_window = prediction_window
 
     def next_occurrence_distance(self, key: Any, current: int) -> Optional[int]:
-        """返回 key 距离 current 的下一次出现距离; 若不再出现返回 None.
-        通过推进 self.future_ptr[key] 指针实现摊销 O(1)。"""
+        """返回 key 下一次出现距离; 不再出现则返回 None。"""
         positions = self.future_map.get(key, [])
         ptr = self.future_ptr[key]
         # 跳过已过去的位置
@@ -51,16 +42,15 @@ class OPTContext:
         self.future_ptr[key] = ptr
         if ptr >= len(positions):
             return None
-        return positions[ptr] - current
+            
+        distance = positions[ptr] - current
+        # 如果距离超出窗口大小，则返回None（视为无穷大）
+        if distance > self.prediction_window:
+            return None
+        return distance
 
 class OPTCacheDecorator:
-    """为函数提供 Belady (OPT) 最优缓存淘汰的装饰器(实例化形式)。
-
-    与原 @OPTCache 不同之处:
-        1. 不使用模块级全局状态; 由 OPTContext 提供未来序列。
-        2. 支持 stats() / reset()。
-        3. 可选 assert_alignment 检查访问序列是否与预生成一致。
-    """
+    """Belady(OPT) 缓存淘汰装饰器。"""
 
     def __init__(
         self,
@@ -68,14 +58,12 @@ class OPTCacheDecorator:
         maxsize: int = 1,
         *,
         assert_alignment: bool = False,
-        name: Optional[str] = None,
     ) -> None:
         if maxsize <= 0:
             raise ValueError("maxsize 必须为正整数")
         self.ctx = context
         self.maxsize = maxsize
         self.assert_alignment = assert_alignment
-        self.name = name or f"OPTCache[{id(self)}]"
 
         # 运行期状态
         self._current: int = 0  # 已访问次数 (相当于未来序列当前位置)
@@ -91,7 +79,6 @@ class OPTCacheDecorator:
         total = self._hits + self._miss
         hit_rate = (self._hits / total) if total else 0.0
         return {
-            "name": self.name,
             "current": self._current,
             "size": len(self._cache),
             "capacity": self.maxsize,
@@ -103,7 +90,7 @@ class OPTCacheDecorator:
         }
 
     def reset_runtime(self) -> None:
-        """不重建未来序列, 仅清理缓存与指针 (实验/测试用途)。"""
+        """重置运行期统计与缓存。"""
         self._current = 0
         self._cache.clear()
         self._hits = self._miss = self._evict = self._future_exhaust = 0
@@ -155,7 +142,7 @@ class OPTCacheDecorator:
             victim_distance = -1  # 最大距离
             for k in self._cache.keys():
                 dist = self.ctx.next_occurrence_distance(k, self._current)
-                if dist is None:  # 不再出现, 立即选择
+                if dist is None:  # 不再出现或超出预测窗口, 立即选择
                     victim_key = k
                     victim_distance = math.inf
                     self._future_exhaust += 1
@@ -174,13 +161,7 @@ class OPTCacheDecorator:
 
         return wrapper
 
-def make_opt_cache(sampler, generator, total_iter: int, *, maxsize: int, assert_alignment: bool = False, name: Optional[str] = None) -> OPTCacheDecorator:
-    """工厂: 一步创建上下文 + 装饰器实例。
-
-    示例:
-        opt_cache = make_opt_cache(sampler, gen, N, maxsize=256)
-        @opt_cache
-        def get_item(ds, idx): ...
-    """
-    ctx = OPTContext(sampler, generator, total_iter)
-    return OPTCacheDecorator(ctx, maxsize=maxsize, assert_alignment=assert_alignment, name=name)
+def make_opt_cache(sampler, generator, total_iter: int, *, maxsize: int, prediction_window: int, assert_alignment: bool = False) -> OPTCacheDecorator:
+    """创建 OPT 上下文并返回装饰器。"""
+    ctx = OPTContext(sampler, generator, total_iter, prediction_window)
+    return OPTCacheDecorator(ctx, maxsize=maxsize, assert_alignment=assert_alignment)
