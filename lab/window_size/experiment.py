@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(ROOT, 'src'))
 sys.path.insert(0, ROOT)
 
 from lib.hit_rate_dataset import HitRateDataset
-from OPT4TorchDataSet.cachelib import make_opt_cache
+from OPT4TorchDataSet.cachelib import make_opt_cache, precompute_opt_indices
 
 def save_results_to_csv(results: List[Dict], output_path: Path):
     """
@@ -173,14 +173,21 @@ if __name__ == "__main__":
 
     caches: List[Tuple[str, object]] = []
 
+    opt_generator = torch.Generator()
+    opt_generator.manual_seed(0)
+    precomputed_opt = precompute_opt_indices(
+        RandomSampler,
+        opt_generator,
+        total_iter,
+    )
+
     # 添加WarmUp缓存（使用最小的窗口大小）
     caches.append(
         ("WarmUp", 0.1, make_opt_cache(
-            sampler=RandomSampler,
-            generator=torch.Generator().manual_seed(0),
             total_iter=total_iter,
             maxsize=int(0.1 * MAX_DATASET_SIZE),
             prediction_window=int(total_iter * prediction_windows[0]),
+            precomputed=precomputed_opt,
         ))
     )
 
@@ -191,11 +198,10 @@ if __name__ == "__main__":
                 f"OPT-{window}", 
                 size, 
                 make_opt_cache(
-                    sampler=RandomSampler,
-                    generator=torch.Generator().manual_seed(0),
                     total_iter=total_iter,
                     maxsize=int(size * MAX_DATASET_SIZE),
                     prediction_window=int(total_iter * window),
+                    precomputed=precomputed_opt,
                 )
             ))
 

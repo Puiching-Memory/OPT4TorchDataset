@@ -19,8 +19,11 @@ requires-python = ">=3.9"
 dependencies = [
 ]
 classifiers = [
-    "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3",
 ]
+
+[project.scripts]
+opt4 = "OPT4TorchDataSet.cli:main"
 
 [tool.setuptools.dynamic]
 version = {attr = "OPT4TorchDataSet.__version__"}

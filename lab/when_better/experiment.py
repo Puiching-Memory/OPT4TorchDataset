@@ -1,213 +1,218 @@
-from __future__ import annotations
-import os
-# no timing needed
+#!/usr/bin/env python3
+"""
+Cache Performance Experiment - Simplified Implementation
+
+This script focuses on recording training speed and final time cost.
+"""
+
 import csv
-from typing import List, Sequence, Callable, Any
-
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
-from matplotlib.lines import Line2D
-from tqdm import tqdm
-from cachetools import FIFOCache, LFUCache, LRUCache, RRCache
-from multiprocessing import Pool
 import sys
-sys.path.append(os.path.abspath("./src/OPT4TorchDataSet"))
-from cachelib import OPTCache, OPTInit
+import torch
+from loguru import logger
+from torch.utils.data import DataLoader, RandomSampler
+import os
+from typing import List, Dict, Tuple
+from pathlib import Path
+from copy import deepcopy
+from cachetools import cached, LRUCache, LFUCache, FIFOCache, RRCache
 
-# Use Times New Roman as the global font (with common fallbacks)
-plt.rcParams['font.family'] = 'Times New Roman'
-plt.rcParams['font.serif'] = ['Times New Roman', 'Times', 'DejaVu Serif', 'serif']
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.join(ROOT, 'src'))
+sys.path.insert(0, ROOT)
 
-# force output directory to be next to this script (lab/why_opt_not_work/out)
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-OUT_DIR = os.path.join(SCRIPT_DIR, 'out')
-N = 20000
-T = 100000
-ALPHAS = [0.0,0.2,0.4,0.6,0.8,1.0,1.2,1.4,1.6]
-SEEDS = [0, 1, 2]
-CACHE_PERCENTS = [5.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0]
+from lib.zipf_dataset import ZipfDataset
+from OPT4TorchDataSet.cachelib import make_opt_cache, precompute_opt_indices
 
-def percents_to_sizes(percs: List[float], N: int) -> List[int]:
-    return [max(1, min(N, int(round(p / 100.0 * N)))) for p in percs]
-
-def zipf_trace(N: int, T: int, alpha: float, seed: int | None = None) -> List[int]:
-    rng = np.random.default_rng(seed)
-    ranks = np.arange(1, N + 1, dtype=np.float64)
-    probs = 1.0 / (ranks ** alpha)
-    probs /= probs.sum()
-    return rng.choice(np.arange(N, dtype=np.int64), size=T, p=probs).tolist()
-
-def simulate_with_cache(trace: Sequence[int], C: int, cache_cls: Callable[..., Any]) -> float:
-    if C <= 0:
-        return 0.0
-    cache = cache_cls(maxsize=C)
-    hits = 0
-    for x in trace:
-        if x in cache:
-            hits += 1
-        else:
-            cache[x] = True
-    return hits / len(trace)
-
-def simulate_opt(trace: Sequence[int], C: int) -> float:
-    if C <= 0:
-        return 0.0
-    OPTInit(lambda seq, replacement=True, num_samples=None, generator=None: list(trace), None, len(trace))
-
-    @OPTCache(cache_max=C)
-    def _access(dummy, idx):
-        return object()
-
-    seen = set()
-    hits = 0
-    for x in trace:
-        res = _access(None, x)
-        if res in seen:
-            hits += 1
-        else:
-            seen.add(res)
-    return hits / len(trace)
-
-POLICIES = {
-    'OPT': simulate_opt,
-    'LRU': None,
-    'LFU': None,
-    'FIFO': None,
-    'RR': None,
-}
-
-
-def simulate_lru(trace: Sequence[int], C: int) -> float:
-    return simulate_with_cache(trace, C, LRUCache)
-
-
-def simulate_lfu(trace: Sequence[int], C: int) -> float:
-    return simulate_with_cache(trace, C, LFUCache)
+def save_results_to_csv(results: List[Dict], output_path: Path):
+    """
+    将实验结果保存到CSV文件中，便于在Excel中绘制图表
+    
+    Args:
+        results: 包含实验结果的字典列表
+        output_path: CSV文件输出路径
+    """
+    # 重新组织数据结构以方便Excel绘图
+    cache_types = sorted(list(set(result["name"] for result in results)))
+    cache_sizes = sorted(list(set(result["cache_size"] for result in results)))
+    zipf_alphas = sorted(list(set(result["zipf_alpha"] for result in results)))
+    
+    # 创建一个二维表，行是缓存大小，列是缓存类型
+    with open(output_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        
+        # 为每个Zipf参数写入结果
+        for alpha in zipf_alphas:
+            writer.writerow([f"Zipf Alpha = {alpha}"])
+            # 写入表头
+            header = ["Cache Size"] + cache_types
+            writer.writerow(header)
+            
+            # 写入命中率数据
+            for size in cache_sizes:
+                row = [size]
+                for cache_type in cache_types:
+                    # 查找对应的命中率
+                    hit_rate = next((r["hit_rate"] for r in results 
+                                   if r["name"] == cache_type and r["cache_size"] == size and r["zipf_alpha"] == alpha), None)
+                    row.append(f"{hit_rate:.4f}" if hit_rate is not None else "")
+                writer.writerow(row)
+            
+            # 添加一行空行作为分隔
+            writer.writerow([])
+            
+            # 写入miss count数据
+            writer.writerow(["Miss Count"] + cache_types)
+            for size in cache_sizes:
+                row = [size]
+                for cache_type in cache_types:
+                    # 查找对应的未命中次数
+                    miss_count = next((r["miss_count"] for r in results 
+                                     if r["name"] == cache_type and r["cache_size"] == size and r["zipf_alpha"] == alpha), None)
+                    row.append(miss_count if miss_count is not None else "")
+                writer.writerow(row)
+            
+            # 添加一行空行作为分隔
+            writer.writerow([])
+            
+            # 写入total accesses数据
+            writer.writerow(["Total Accesses"] + [""] * (len(cache_types) - 1) + [next(r["total_accesses"] for r in results if r["zipf_alpha"] == alpha)])
+            writer.writerow([])  # 额外空行分隔不同alpha值的结果
 
 
-def simulate_fifo(trace: Sequence[int], C: int) -> float:
-    return simulate_with_cache(trace, C, FIFOCache)
+class CacheExperiment:
+    def __init__(self,
+                 caches: List[Tuple[str, object]] = None,
+                 output_dir: str = "results",
+                 batch_size: int = 32,
+                 num_workers: int = 0,
+                 dataset: torch.utils.data.Dataset = None,
+                 epochs: int = 1,
+                 zipf_alpha: float = 1.0
+                 ):
+        self.caches = caches
+        self.output_dir = Path(output_dir)
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.dataset = dataset
+        self.epochs = epochs
+        self.zipf_alpha = zipf_alpha
 
+        self.output_dir.mkdir(exist_ok=True)
 
-def simulate_rr(trace: Sequence[int], C: int) -> float:
-    return simulate_with_cache(trace, C, RRCache)
+    def _run_single_experiment(self) -> float:
+        """Run single experiment focused on speed and time cost"""
+        
+        dataset = deepcopy(self.dataset)
+        
+        dataloader = DataLoader(dataset,
+                                batch_size=self.batch_size,
+                                shuffle=False,
+                                num_workers=self.num_workers,
+                                pin_memory=True,
+                                sampler=RandomSampler(dataset,
+                                                      replacement=True,
+                                                      num_samples=len(dataset) * self.epochs, # 足够大的轮数确保采样充足
+                                                      generator=dataset.getGenerator()
+                                                      )
+                                )
+        
+        for batch_data in dataloader:
+            pass
 
+        return dataset.getMissCount()
+    
+    def run(self):
+        """Run experiments using internal configuration"""
+        
+        logger.info(f"Starting Cache Performance Experiments with Zipf alpha={self.zipf_alpha}")
+        results = []
+        
+        for name, cache_size, cache in self.caches:
+            self.dataset.setCache(cache)
+            miss_count = self._run_single_experiment()
+            total_accesses = len(self.dataset) * self.epochs
+            hit_rate = (total_accesses - miss_count) / total_accesses  # 命中率是 0-1 之间的小数
+            
+            results.append({
+                "name": name,
+                "cache_size": cache_size,
+                "hit_rate": hit_rate,
+                "miss_count": miss_count,
+                "total_accesses": total_accesses,
+                "zipf_alpha": self.zipf_alpha
+            })
+            
+            self.dataset.resetMissCount()
+            logger.info(f"Cache: {name} hit rate: {hit_rate:.2%}")
 
-# fill in policy functions (avoids lambdas so they are picklable)
-POLICIES['LRU'] = simulate_lru
-POLICIES['LFU'] = simulate_lfu
-POLICIES['FIFO'] = simulate_fifo
-POLICIES['RR'] = simulate_rr
+        return results
 
+if __name__ == "__main__":
+    MAX_DATASET_SIZE = 10000
+    epochs = 10
+    batch_size = 32
+    total_iter = MAX_DATASET_SIZE * epochs
 
-def _worker(args):
-    """Worker for a single (si, ai, ci) task. Returns (si, ai, ci, results_tuple)."""
-    si, ai, ci, seed, alpha, C, N_local, T_local = args
-    trace = zipf_trace(N_local, T_local, alpha, seed)
-    res = tuple(POLICIES[name](trace, C) for name in POLICIES.keys())
-    return si, ai, ci, res
+    # 定义要测试的Zipf参数
+    zipf_alphas = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 1.0, 1.5]
+    
+    # 定义缓存大小和类型
+    cache_sizes = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    cache_types = ["LRU", "LFU", "FIFO", "RR"]
+    
+    # 收集所有实验结果
+    all_results = []
+    
+    for alpha in zipf_alphas:
+        caches: List[Tuple[str, object]] = []
+        
+        caches.append(("Warmup", 0.0, cached(LRUCache(maxsize=MAX_DATASET_SIZE))))
 
-def run_grid(out_dir: str, N: int, T: int, alphas: List[float], cache_sizes: List[int], seeds: List[int], processes: int | None = None):
-    os.makedirs(out_dir, exist_ok=True)
-    A = len(alphas)
-    Cn = len(cache_sizes)
-    P = len(POLICIES)
-    S = len(seeds)
-    raw = np.zeros((S, A, Cn, P), dtype=np.float32)
+        # 为每种缓存类型和缓存大小生成配置
+        for cache_type in cache_types:
+            for size in cache_sizes:
+                cache_size = int(size * MAX_DATASET_SIZE)
+                if cache_type == "LRU":
+                    caches.append((cache_type, size, cached(LRUCache(maxsize=cache_size))))
+                elif cache_type == "LFU":
+                    caches.append((cache_type, size, cached(LFUCache(maxsize=cache_size))))
+                elif cache_type == "FIFO":
+                    caches.append((cache_type, size, cached(FIFOCache(maxsize=cache_size))))
+                elif cache_type == "RR":
+                    caches.append((cache_type, size, cached(RRCache(maxsize=cache_size))))
+        
+        opt_generator = torch.Generator()
+        opt_generator.manual_seed(0)
+        precomputed_opt = precompute_opt_indices(
+            RandomSampler,
+            opt_generator,
+            total_iter,
+        )
 
-    # prepare tasks
-    tasks = []
-    for si, seed in enumerate(seeds):
-        for ai, alpha in enumerate(alphas):
-            for ci, C in enumerate(cache_sizes):
-                tasks.append((si, ai, ci, seed, alpha, C, N, T))
+        # 添加OPT缓存配置
+        for size in cache_sizes:
+            cache_size = int(size * MAX_DATASET_SIZE)
+            caches.append(("OPT", size, make_opt_cache(
+                total_iter=total_iter,
+                maxsize=cache_size,
+                prediction_window=total_iter*0.2,
+                precomputed=precomputed_opt,
+            )))
 
-    total = len(tasks)
-    processes = processes or max(1, os.cpu_count() or 1)
-    with Pool(processes) as pool:
-        with tqdm(total=total, desc='grid', unit='task') as pbar:
-            for si, ai, ci, res in pool.imap_unordered(_worker, tasks):
-                raw[si, ai, ci, :] = res
-                pbar.update(1)
-
-    mean = raw.mean(axis=0)
-    std = raw.std(axis=0)
-    print(f"Done grid; Output directory: {out_dir}")
-    return mean, std
-
-def plot_results(mean: np.ndarray, std: np.ndarray, alphas: List[float], cache_sizes: List[int], out_dir: str):
-    os.makedirs(out_dir, exist_ok=True)
-    names = list(POLICIES.keys())
-    percents = [c / N * 100.0 for c in cache_sizes]
-
-    # heatmap OPT - LRU
-    diff = mean[:, :, names.index('OPT')] - mean[:, :, names.index('LRU')]
-    fig, ax = plt.subplots(figsize=(8, 4))
-    im = ax.imshow(diff, aspect='auto', origin='lower', cmap='RdBu')
-    fig.colorbar(im, ax=ax, label='OPT - LRU')
-    ax.set_yticks(range(len(alphas)))
-    ax.set_yticklabels([str(a) for a in alphas])
-    ax.set_xticks(range(len(percents)))
-    ax.set_xticklabels([f"{p:.1f}%" for p in percents], rotation=45, ha='right')
-    ax.set_xlabel(f'Cache (% of N={N})')
-    ax.set_ylabel('alpha')
-    fig.tight_layout()
-    fig.savefig(os.path.join(out_dir, 'heatmap.png'), dpi=300)
-
-    # per-alpha plots
-    colors = ['#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00']
-    for ai, a in enumerate(alphas):
-        fig, ax = plt.subplots(figsize=(8, 4))
-        # simple line + scatter; use solid lines for all
-        for pi, name in enumerate(names):
-            m = mean[ai, :, pi]
-            # choose color: highlight OPT and LFU, others black (LRU/FIFO/RR same color)
-            if name in ('OPT', 'LFU'):
-                color = colors[pi % len(colors)]
-            else:
-                color = 'black'
-            ax.plot(percents, m, label=name, color=color, linestyle='-', alpha=0.9, linewidth=1.5)
-            ax.scatter(percents, m, color=color, edgecolors='white', s=40, zorder=3)
-        ax.set_xscale('log')
-        ax.set_xticks(percents)
-        ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, pos: f"{x:.1f}%"))
-        ax.set_xlabel(f'Cache (% of N={N})')
-        ax.set_ylabel('hit rate')
-        ax.set_title(f'alpha={a}')
-        # custom legend: highlight OPT and LFU, group others
-        opt_color = colors[names.index('OPT') % len(colors)] if 'OPT' in names else colors[0]
-        lfu_color = colors[names.index('LFU') % len(colors)] if 'LFU' in names else colors[1 % len(colors)]
-        others_color = 'black'
-        h_opt = Line2D([0], [0], color=opt_color, lw=1.5)
-        h_lfu = Line2D([0], [0], color=lfu_color, lw=1.5)
-        h_others = Line2D([0], [0], color=others_color, lw=1.5)
-        legend = ax.legend([h_opt, h_lfu, h_others], ['OPT', 'LFU', 'Others (LRU/FIFO/RR)'], title='Policies', framealpha=0.9)
-        # small caption below legend explaining style
-        legend.get_frame().set_edgecolor('gray')
-        ax.grid(True, ls='--', alpha=0.4)
-        fig.tight_layout()
-        fig.savefig(os.path.join(out_dir, f'hitrate_alpha_{a}.png'), dpi=300)
-
-    print(f"Plots saved to {out_dir}")
-
-def summarize_results(mean: np.ndarray, std: np.ndarray, alphas: List[float], cache_sizes: List[int], out_dir: str):
-    names = list(POLICIES.keys())
-    csv_path = os.path.join(out_dir, 'summary.csv')
-    with open(csv_path, 'w', newline='') as f:
-        w = csv.writer(f)
-        w.writerow(['alpha', 'cache', 'policy', 'mean', 'std'])
-        for ai, a in enumerate(alphas):
-            for ci, c in enumerate(cache_sizes):
-                for pi, name in enumerate(names):
-                    w.writerow([a, c, name, float(mean[ai, ci, pi]), float(std[ai, ci, pi])])
-    print(f"Summary saved to {csv_path}")
-
-def main():
-    cache_sizes = percents_to_sizes(CACHE_PERCENTS, N)
-    mean, std = run_grid(OUT_DIR, N, T, ALPHAS, cache_sizes, SEEDS)
-    summarize_results(mean, std, ALPHAS, cache_sizes, OUT_DIR)
-    plot_results(mean, std, ALPHAS, cache_sizes, OUT_DIR)
-
-if __name__ == '__main__':
-    main()
+        experiment = CacheExperiment(caches=caches,
+                                     batch_size=batch_size,
+                                     dataset=ZipfDataset(MAX_DATASET_SIZE, alpha=alpha, seed=0),
+                                     num_workers=0,
+                                     epochs=epochs,
+                                     zipf_alpha=alpha
+                                     )
+        # 收集实验结果
+        all_results.extend(experiment.run())
+    
+    # 创建输出目录
+    output_dir = Path("results")
+    output_dir.mkdir(exist_ok=True)
+    
+    # 保存所有结果到一个CSV文件
+    save_results_to_csv(all_results, output_dir / "all_results.csv")
+    logger.info(f"All results saved to {output_dir / 'all_results.csv'}")

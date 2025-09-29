@@ -92,8 +92,6 @@ class CacheExperiment:
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
-            
-            # 移除 pbar.update() 调用，因为 tqdm 在迭代时会自动更新
         
         total_training_time = time.perf_counter() - start_time
         logger.info(f"Total time: {total_training_time:.4f}s")
