@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Cache Performance Experiment - Simplified Implementation
+缓存命中率实验
 
-This script focuses on recording training speed and final time cost.
+该脚本用于比较不同缓存替换策略（LRU、LFU、FIFO、RR和OPT）在模拟数据集上的命中率表现。
+通过测量各种缓存大小配置下的命中率和未命中次数，评估各策略的有效性。
 """
 
 import csv
@@ -13,7 +14,6 @@ from torch.utils.data import DataLoader, RandomSampler
 import os
 from typing import List, Dict, Tuple
 from pathlib import Path
-from copy import deepcopy
 from cachetools import cached, LRUCache, LFUCache, FIFOCache, RRCache
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.join(ROOT, 'src'))
 sys.path.insert(0, ROOT)
 
 from lib.hit_rate_dataset import HitRateDataset
-from OPT4TorchDataSet.cachelib import make_opt_cache, precompute_opt_indices
+from OPT4TorchDataSet.cachelib import OPTCacheDecorator, generate_precomputed_file
 
 def save_results_to_csv(results: List[Dict], output_path: Path):
     """
@@ -82,6 +82,17 @@ class CacheExperiment:
                  dataset: torch.utils.data.Dataset = None,
                  epochs: int = 1,
                  ):
+        """
+        初始化缓存实验
+        
+        Args:
+            caches: 缓存配置列表，每项包含(名称, 缓存大小比例, 缓存实例)
+            output_dir: 结果输出目录
+            batch_size: 批处理大小
+            num_workers: 数据加载器工作进程数
+            dataset: 实验数据集
+            epochs: 训练轮数
+        """
         self.caches = caches
         self.output_dir = Path(output_dir)
         self.batch_size = batch_size
@@ -91,10 +102,20 @@ class CacheExperiment:
 
         self.output_dir.mkdir(exist_ok=True)
 
-    def _run_single_experiment(self) -> float:
-        """Run single experiment focused on speed and time cost"""
+    def _run_single_experiment(self, cache) -> float:
+        """
+        运行单个缓存实验
         
-        dataset = deepcopy(self.dataset)
+        Args:
+            cache: 缓存实例
+            
+        Returns:
+            float: 未命中次数
+        """
+        
+        # 创建新的数据集实例，确保每次实验都从干净状态开始
+        dataset = HitRateDataset(len(self.dataset.dataset))
+        dataset.setCache(cache)
         
         dataloader = DataLoader(dataset,
                                 batch_size=self.batch_size,
@@ -114,14 +135,17 @@ class CacheExperiment:
         return dataset.getMissCount()
     
     def run(self):
-        """Run experiments using internal configuration"""
+        """运行所有缓存实验并保存结果"""
         
         logger.info("Starting Cache Performance Experiments")
         results = []
         
         for name, cache_size, cache in self.caches:
-            self.dataset.setCache(cache)
-            miss_count = self._run_single_experiment()
+            # 对于OPT缓存，需要重置状态
+            if isinstance(cache, OPTCacheDecorator):
+                cache.reset()
+            
+            miss_count = self._run_single_experiment(cache)
             total_accesses = len(self.dataset) * self.epochs
             hit_rate = (total_accesses - miss_count) / total_accesses  # 命中率是 0-1 之间的小数
             
@@ -133,7 +157,6 @@ class CacheExperiment:
                 "total_accesses": total_accesses
             })
             
-            self.dataset.resetMissCount()
             logger.info(f"Cache: {name} hit rate: {hit_rate:.2%}")
 
         # 保存结果到CSV文件
@@ -165,24 +188,35 @@ if __name__ == "__main__":
             elif cache_type == "RR":
                 caches.append((cache_type, size, cached(RRCache(maxsize=cache_size))))
     
-    # 预计算 OPT 所需的未来索引
-    opt_generator = torch.Generator()
-    opt_generator.manual_seed(0)
-    precomputed_opt = precompute_opt_indices(
-        RandomSampler,
-        opt_generator,
-        total_iter,
-    )
-
+    # 使用预计算的OPT缓存文件 - 使用与实验匹配的预计算数据
+    precomputed_path = os.path.join(ROOT, 'precomputed', 'hit_rate_experiment_opt.pkl')
+    
+    # 检查预计算文件是否存在，不存在则生成
+    if not os.path.exists(precomputed_path):
+        logger.info(f"预计算文件不存在，正在生成: {precomputed_path}")
+        
+        # 使用新的API生成预计算文件
+        generate_precomputed_file(
+            dataset_size=MAX_DATASET_SIZE,
+            total_iterations=total_iter,
+            persist_path=precomputed_path,
+            random_seed=0,  # 与 HitRateDataset 使用相同的种子
+            replacement=True
+        )
+        
+        logger.info(f"预计算文件生成完成: {precomputed_path}")
+    
     # 添加OPT缓存配置
     for size in cache_sizes:
         cache_size = int(size * MAX_DATASET_SIZE)
-        caches.append(("OPT", size, make_opt_cache(
-            total_iter=total_iter,
-            maxsize=cache_size,
-            prediction_window=int(total_iter * 0.2),
-            precomputed=precomputed_opt,
-        )))
+        if cache_size > 0:  # 避免缓存大小为0的情况
+            opt_decorator = OPTCacheDecorator(
+                precomputed_path=precomputed_path,
+                maxsize=cache_size,
+                prediction_window=int(total_iter * 0.2),  # 预测窗口为总迭代次数的20%
+                total_iter=total_iter,
+            )
+            caches.append(("OPT", size, opt_decorator))
 
     experiment = CacheExperiment(caches=caches,
                                  batch_size=batch_size,

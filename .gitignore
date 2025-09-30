@@ -6,3 +6,4 @@ dist/
 *.c
 *.html
 results/
+precomputed/

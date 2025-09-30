@@ -26,24 +26,41 @@ MVP：一页数学推导 + 一套仿真实验图（heatmap）。
 pip install OPT4TorchDataset
 ```
 
-## Usage
+## Quick Start
 
-#### 1. 离线预计算CLI
-```bash
-# 使用内置CLI预计算OPT访问索引
-opt4 \
-    --total-iter 100000 \
-    --output ./precomputed/imagenet_opt.pkl \
-    --seed 42 \
-    --num-workers 8
+### Method 1: API
+
+```python
+from OPT4TorchDataSet.cachelib import generate_precomputed_file
+
+generate_precomputed_file(
+    dataset_size=10000,        # 数据集大小
+    total_iterations=100000,   # 总迭代次数
+    persist_path="precomputed/my_experiment.pkl",
+    random_seed=0,             # 随机种子
+    replacement=True           # 有放回采样
+)
 ```
 
-#### 2. 在PyTorch数据集中使用
+### Method 2: CLI
+
+```bash
+python tools/generate_opt_precomputed.py \
+    --dataset-size 5000 \
+    --total-iterations 25000 \
+    --output data/custom.pkl \
+    --seed 42 \
+    --verbose
+```
+
+### 在PyTorch数据集中使用
 ```python
+import os
 import torch
 import torchvision
 import torch.utils.data as data
 from OPT4TorchDataSet.cachelib import (
+    generate_precomputed_file,
     load_precomputed_opt_indices,
     make_opt_cache,
     OPTCacheDecorator
@@ -61,6 +78,17 @@ class Imagenet1K(data.Dataset):
 
     def setup_cache(self, precomputed_path, cache_size):
         """设置OPT缓存"""
+        # 检查预计算文件是否存在，不存在则自动生成
+        if not os.path.exists(precomputed_path):
+            print(f"预计算文件不存在，正在生成: {precomputed_path}")
+            generate_precomputed_file(
+                dataset_size=len(self.idx_list),
+                total_iterations=len(self.idx_list) * 3,  # 假设训练3个epoch
+                persist_path=precomputed_path,
+                random_seed=42
+            )
+            print("预计算文件生成完成")
+        
         precomputed = load_precomputed_opt_indices(precomputed_path)
         self.cache_decorator = OPTCacheDecorator(
             precomputed_path=precomputed_path,
@@ -123,14 +151,14 @@ if __name__ == "__main__":
         print(f"批次 {batch_idx}: {image.shape}, {label.shape}")
 ```
 
-### 方法二：本地开发使用
+### 本地开发使用
 
 如果你没有安装包，而是直接使用源码，可以通过以下方式启动CLI：
 
 ```bash
 # 在项目根目录下
 python -m src.OPT4TorchDataSet.cli \
-    --total-iter 100000 \
+    --total-iter 1000000 \
     --output ./precomputed/imagenet_opt.pkl \
     --seed 42
 ```

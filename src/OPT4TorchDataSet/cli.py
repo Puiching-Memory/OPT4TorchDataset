@@ -3,6 +3,9 @@ import importlib
 import sys
 from pathlib import Path
 from typing import Callable, Optional, Sequence
+import torch
+import time
+from tqdm import tqdm
 
 if __package__ in {None, ""}:  # pragma: no cover - 直接运行文件时
     PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -32,13 +35,6 @@ def _resolve_callable(target: str) -> Callable:
 
 
 def _build_generator(seed: Optional[int]):
-    try:
-        import torch
-    except ModuleNotFoundError:
-        if seed is not None:
-            print("警告: 未安装 torch，忽略 --seed。", file=sys.stderr)
-        return None
-
     generator = torch.Generator()
     if seed is not None:
         generator.manual_seed(seed)
@@ -75,11 +71,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="随机种子 (若安装 torch 则用于 torch.Generator)",
     )
-    parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="允许覆盖已存在的输出文件",
-    )
     return parser
 
 
@@ -90,11 +81,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     sampler_class = _resolve_callable(args.sampler)
     generator = _build_generator(args.seed)
 
-    # 检查输出文件是否存在
-    if args.output.exists() and not args.overwrite:
-        raise FileExistsError(
-            f"目标文件 {args.output} 已存在，如需覆盖请添加 --overwrite"
-        )
+    # 始终允许覆盖输出文件
 
     print(
         f"开始预计算: total_iter={args.total_iter}, sampler={args.sampler}",
@@ -111,7 +98,8 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
                 num_samples=num_samples,
                 generator=generator
             )
-            return list(sampler_instance)
+            indices = list(tqdm(sampler_instance, desc="采样进度", total=args.total_iter))
+            return indices
         else:
             # 对于其他采样器，尝试直接调用
             return sampler_class(
@@ -122,6 +110,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
             )
     
     # 调用precompute_opt_indices，它会直接保存文件
+    start_time = time.perf_counter()
     try:
         precompute_opt_indices(
             sampler_wrapper,
@@ -131,12 +120,13 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         )
     except Exception as e:
         print(f"错误: {e}")
-        print("提示: 请确保已安装torch，或使用简单的采样器")
         return 1
+    end_time = time.perf_counter()
 
     print(
         f"完成: 预计算结果已保存到 {args.output}"
     )
+    print(f"总耗时: {end_time - start_time:.2f} 秒")
     return 0
 
 

@@ -22,7 +22,8 @@ sys.path.insert(0, os.path.join(ROOT, 'src'))
 sys.path.insert(0, ROOT)
 
 from lib.hit_rate_dataset import HitRateDataset
-from OPT4TorchDataSet.cachelib import make_opt_cache, precompute_opt_indices
+from OPT4TorchDataSet.cachelib import OPTCacheDecorator
+import tempfile
 
 def save_results_to_csv(results: List[Dict], output_path: Path):
     """
@@ -173,42 +174,56 @@ if __name__ == "__main__":
 
     caches: List[Tuple[str, object]] = []
 
-    opt_generator = torch.Generator()
-    opt_generator.manual_seed(0)
-    precomputed_opt = precompute_opt_indices(
-        RandomSampler,
-        opt_generator,
-        total_iter,
-    )
+    # 创建临时文件用于存储预计算数据
+    with tempfile.NamedTemporaryFile(suffix='.pkl', delete=False) as tmp_file:
+        tmp_path = tmp_file.name
+    
+    try:
+        opt_generator = torch.Generator()
+        opt_generator.manual_seed(0)
+        
+        # 生成预计算数据
+        from OPT4TorchDataSet.cachelib import generate_precomputed_file
+        generate_precomputed_file(
+            dataset_size=MAX_DATASET_SIZE,
+            total_iterations=total_iter,
+            persist_path=tmp_path,
+            random_seed=0,
+            replacement=True
+        )
 
-    # 添加WarmUp缓存（使用最小的窗口大小）
-    caches.append(
-        ("WarmUp", 0.1, make_opt_cache(
-            total_iter=total_iter,
-            maxsize=int(0.1 * MAX_DATASET_SIZE),
-            prediction_window=int(total_iter * prediction_windows[0]),
-            precomputed=precomputed_opt,
-        ))
-    )
-
-    # 循环创建不同缓存大小和窗口大小的组合
-    for size in cache_sizes:
-        for window in prediction_windows:
-            caches.append((
-                f"OPT-{window}", 
-                size, 
-                make_opt_cache(
-                    total_iter=total_iter,
-                    maxsize=int(size * MAX_DATASET_SIZE),
-                    prediction_window=int(total_iter * window),
-                    precomputed=precomputed_opt,
-                )
+        # 添加WarmUp缓存（使用最小的窗口大小）
+        caches.append(
+            ("WarmUp", 0.1, OPTCacheDecorator(
+                precomputed_path=tmp_path,
+                maxsize=int(0.1 * MAX_DATASET_SIZE),
+                prediction_window=int(total_iter * prediction_windows[0]),
+                total_iter=total_iter,
             ))
+        )
 
-    experiment = CacheExperiment(caches=caches,
-                                 batch_size=batch_size,
-                                 dataset=HitRateDataset(MAX_DATASET_SIZE),
-                                 num_workers=0,
-                                 epochs=epochs,
-                                 )
-    experiment.run()
+        # 循环创建不同缓存大小和窗口大小的组合
+        for size in cache_sizes:
+            for window in prediction_windows:
+                caches.append((
+                    f"OPT-{window}", 
+                    size, 
+                    OPTCacheDecorator(
+                        precomputed_path=tmp_path,
+                        maxsize=int(size * MAX_DATASET_SIZE),
+                        prediction_window=int(total_iter * window),
+                        total_iter=total_iter,
+                    )
+                ))
+
+        experiment = CacheExperiment(caches=caches,
+                                     batch_size=batch_size,
+                                     dataset=HitRateDataset(MAX_DATASET_SIZE),
+                                     num_workers=0,
+                                     epochs=epochs,
+                                     )
+        experiment.run()
+    finally:
+        # 清理临时文件
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
