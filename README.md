@@ -25,6 +25,7 @@ MVP：一页数学推导 + 一套仿真实验图（heatmap）。
 ```bash
 pip install OPT4TorchDataset
 ```
+> 目前，我们尚未将wheel包推送至pypi，所以该方法无法使用。
 
 ## Quick Start
 
@@ -36,7 +37,7 @@ from OPT4TorchDataSet.cachelib import generate_precomputed_file
 generate_precomputed_file(
     dataset_size=10000,        # 数据集大小
     total_iterations=100000,   # 总迭代次数
-    persist_path="precomputed/my_experiment.pkl",
+    persist_path="precomputed/my_experiment.pkl", # 预计算结果保存路径
     random_seed=0,             # 随机种子
     replacement=True           # 有放回采样
 )
@@ -45,32 +46,30 @@ generate_precomputed_file(
 ### Method 2: CLI
 
 ```bash
-python tools/generate_opt_precomputed.py \
-    --dataset-size 5000 \
-    --total-iterations 25000 \
-    --output data/custom.pkl \
-    --seed 42 \
-    --verbose
+opt4torch-precompute \
+    --total-iter 100000 \
+    --output precomputed/my_experiment.pkl \
+    --seed 42
 ```
+
+- `--total-iter`: **必需**。预计算的总访问次数，通常等于你训练中的总采样次数
+- `--output`: **必需**。保存预计算结果的文件路径（.pkl格式）
+- `--sampler`: 采样器类型，格式为`module:callable`（默认：`torch.utils.data:RandomSampler`）
+- `--seed`: 随机种子，确保结果可重现（可选）
+
 
 ### 在PyTorch数据集中使用
 ```python
-import os
 import torch
-import torchvision
 import torch.utils.data as data
 from OPT4TorchDataSet.cachelib import (
     generate_precomputed_file,
-    load_precomputed_opt_indices,
-    make_opt_cache,
     OPTCacheDecorator
 )
 
-class Imagenet1K(data.Dataset):
-    def __init__(self, root_dir, split, cache_size=None, precomputed_path=None):
-        self.root_dir = root_dir
-        self.split = split
-        self.idx_list = os.listdir(os.path.join(root_dir, split))
+class CustomDataset(data.Dataset):
+    def __init__(self, data_source, cache_size=None, precomputed_path=None):
+        self.data_source = data_source
         
         # 如果提供了预计算文件，设置缓存
         if precomputed_path and cache_size:
@@ -80,35 +79,28 @@ class Imagenet1K(data.Dataset):
         """设置OPT缓存"""
         # 检查预计算文件是否存在，不存在则自动生成
         if not os.path.exists(precomputed_path):
-            print(f"预计算文件不存在，正在生成: {precomputed_path}")
             generate_precomputed_file(
-                dataset_size=len(self.idx_list),
-                total_iterations=len(self.idx_list) * 3,  # 假设训练3个epoch
+                dataset_size=len(self.data_source),
+                total_iterations=len(self.data_source) * 3,  # 假设训练3个epoch
                 persist_path=precomputed_path,
                 random_seed=42
             )
-            print("预计算文件生成完成")
         
-        precomputed = load_precomputed_opt_indices(precomputed_path)
         self.cache_decorator = OPTCacheDecorator(
             precomputed_path=precomputed_path,
             maxsize=cache_size,
-            prediction_window=len(precomputed.future_index),
-            total_iter=len(precomputed.future_index)
+            prediction_window=10000,  # 根据需要调整
+            total_iter=len(self.data_source) * 3  # 应与预计算时的total_iterations一致
         )
         self._cached_getitem = self.cache_decorator(self._load_data)
 
     def _load_data(self, obj, index):
         """实际的数据加载方法（会被缓存）"""
-        image = torchvision.io.decode_image(
-            os.path.join(self.root_dir, self.split, self.idx_list[index]),
-            mode=torchvision.io.ImageReadMode.RGB
-        )
-        label = torch.tensor(int(self.idx_list[index].split("-")[0]))
-        return image, label
+        # 在这里实现实际的数据加载逻辑
+        return self.data_source[index]
 
     def __len__(self):
-        return len(self.idx_list)
+        return len(self.data_source)
     
     def __getitem__(self, index):
         if hasattr(self, '_cached_getitem'):
@@ -118,24 +110,25 @@ class Imagenet1K(data.Dataset):
 
 # 使用示例
 if __name__ == "__main__":
-    from torch.utils.data import DataLoader, WeightedRandomSampler
+    from torch.utils.data import DataLoader, RandomSampler
 
-    dataset = Imagenet1K(
-        r".cache/imagenet-1k-jpeg-256",
-        "train",
-        cache_size=int(0.3 * 50000),  # 缓存30%的数据集
-        precomputed_path="./precomputed/imagenet_opt.pkl"
+    # 创建数据集
+    data_source = list(range(1000))  # 示例数据
+    dataset = CustomDataset(
+        data_source,
+        cache_size=300,  # 缓存30%的数据
+        precomputed_path="./precomputed/opt_cache.pkl"
     )
     
-    # 使用相同的采样器配置
-    weights = [1.0] * len(dataset)  # 或使用你的权重分布
-    sampler = WeightedRandomSampler(
-        weights, 
-        num_samples=len(dataset) * 3,
+    # 创建采样器
+    sampler = RandomSampler(
+        dataset,
         replacement=True,
+        num_samples=len(dataset) * 3,
         generator=torch.Generator().manual_seed(42)
     )
     
+    # 创建数据加载器
     dataloader = DataLoader(
         dataset=dataset,
         batch_size=32,
@@ -145,196 +138,30 @@ if __name__ == "__main__":
         sampler=sampler
     )
 
-    for batch_idx, (image, label) in enumerate(dataloader):
+    # 使用数据加载器
+    for batch_idx, data in enumerate(dataloader):
         if batch_idx >= 10:  # 测试10个批次
             break
-        print(f"批次 {batch_idx}: {image.shape}, {label.shape}")
-```
-
-### 本地开发使用
-
-如果你没有安装包，而是直接使用源码，可以通过以下方式启动CLI：
-
-```bash
-# 在项目根目录下
-python -m src.OPT4TorchDataSet.cli \
-    --total-iter 1000000 \
-    --output ./precomputed/imagenet_opt.pkl \
-    --seed 42
-```
-
-**替代方案 - 直接使用Python代码**:
-
-如果不想安装torch或遇到CLI问题，可以直接在Python中预计算：
-
-```python
-import sys
-from pathlib import Path
-import random
-import pickle
-
-# 添加src到Python路径
-sys.path.insert(0, str(Path(__file__).parent / "src"))
-
-def simple_precompute(total_iter, output_path, seed=42):
-    """简单的预计算函数，不依赖torch"""
-    random.seed(seed)
-    
-    # 生成随机访问序列 (模拟RandomSampler)
-    future_index = [random.randint(0, total_iter-1) for _ in range(total_iter)]
-    
-    # 构建未来映射
-    future_map = {}
-    for pos, key in enumerate(future_index):
-        if key not in future_map:
-            future_map[key] = []
-        future_map[key].append(pos)
-    
-    # 保存到文件
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, 'wb') as f:
-        pickle.dump({
-            'future_index': future_index,
-            'future_map': future_map
-        }, f)
-    
-    print(f"预计算完成: {len(future_index)} 个访问, {len(future_map)} 个唯一键")
-
-# 使用示例
-if __name__ == "__main__":
-    simple_precompute(10000, "local_cache.pkl", seed=42)
-```
-
-#### 在代码中使用本地模块
-```python
-import sys
-from pathlib import Path
-
-# 添加src目录到Python路径
-sys.path.insert(0, str(Path(__file__).parent / "src"))
-
-from OPT4TorchDataSet.cachelib import precompute_opt_indices, OPTCacheDecorator
-import torch
-from torch.utils.data import WeightedRandomSampler
-
-# 预计算示例
-def precompute_example():
-    sampler = WeightedRandomSampler
-    generator = torch.Generator().manual_seed(42)
-    
-    precomputed = precompute_opt_indices(
-        sampler=sampler,
-        generator=generator,
-        total_iter=10000,
-        persist_path="local_cache.pkl"
-    )
-    print("预计算完成")
-
-# 使用缓存装饰器
-def use_cache_decorator():
-    cache = OPTCacheDecorator(
-        precomputed_path="local_cache.pkl",
-        maxsize=100,
-        prediction_window=500,
-        total_iter=10000
-    )
-    
-    def expensive_operation(obj, index):
-        # 模拟耗时操作
-        print(f"执行昂贵操作: {index}")
-        return f"result_{index}"
-    
-    cached_func = cache(expensive_operation)
-    
-    # 测试
-    for i in range(20):
-        result = cached_func(None, i % 10)
-        if i % 5 == 0:
-            stats = cache.stats()
-            print(f"命中率: {stats['hit_rate']:.2%}")
-
-if __name__ == "__main__":
-    precompute_example()
-    use_cache_decorator()
-```
-
-### CLI参数说明
-
-#### 安装后使用：
-```bash
-opt4 --help
-```
-
-#### 本地开发使用：
-```bash
-python -m src.OPT4TorchDataSet.cli --help
-# 或
-python src/OPT4TorchDataSet/cli.py --help
-```
-
-#### 参数详解：
-
-- `--total-iter`: **必需**。预计算的总访问次数，通常等于你训练中的总采样次数
-- `--output`: **必需**。保存预计算结果的文件路径（.pkl格式）
-- `--sampler`: 采样器类型，格式为`module:callable`（默认：`torch.utils.data:RandomSampler`）
-- `--seed`: 随机种子，确保结果可重现（可选）
-- `--overwrite`: 允许覆盖已存在的输出文件
-
-#### 使用示例：
-
-**基础用法**：
-```bash
-# 安装后使用
-opt4 --total-iter 50000 --output cache.pkl --seed 42
-
-# 本地使用 (需要torch)
-python -m src.OPT4TorchDataSet.cli --total-iter 50000 --output cache.pkl --seed 42
-```
-
-**自定义采样器**：
-```bash
-# 使用WeightedRandomSampler
-opt4 \
-    --total-iter 100000 \
-    --output weighted_cache.pkl \
-    --seed 42 \
-    --sampler torch.utils.data:WeightedRandomSampler
-
-# 使用自定义采样器
-opt4 \
-    --total-iter 100000 \
-    --output custom_cache.pkl \
-    --sampler mypackage.samplers:CustomSampler
-```
-
-### 加载和使用预计算结果
-
-预计算完成后，在训练代码中加载和使用：
-
-```python
-from OPT4TorchDataSet.cachelib import (
-    load_precomputed_opt_indices,
-    make_opt_cache,
-)
-
-# 加载预计算结果
-precomputed = load_precomputed_opt_indices("./precomputed/imagenet_opt.pkl")
-
-# 创建OPT缓存
-cache = make_opt_cache(
-    total_iter=len(precomputed.future_index),
-    maxsize=int(0.3 * dataset_size),  # 缓存30%的数据集大小
-    prediction_window=len(precomputed.future_index),
-    precomputed=precomputed,
-)
-
-# 使用缓存（详见上面的完整示例）
+        print(f"批次 {batch_idx}: {data.shape}")
 ```
 
 **重要提醒**：
 - 训练时使用的采样器配置必须与预计算时完全一致
 - 包括相同的随机种子、相同的采样器类型和参数
 - 总访问次数也必须匹配，否则会抛出异常
+
+## 本地开发使用
+
+如果你没有安装包，而是直接使用源码，可以通过以下方式启动CLI：
+
+```bash
+# 在项目根目录下
+python -m src.OPT4TorchDataSet.cli \
+    --total-iter 100000 \
+    --output ./precomputed/imagenet_opt.pkl \
+    --seed 42
+```
+
 
 ## Environment (for development only)
 ```bash
