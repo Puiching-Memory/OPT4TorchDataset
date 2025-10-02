@@ -1,6 +1,5 @@
 timm
 huggingface-hub
-torchmetrics
 cachetools
 swanlab
 loguru
