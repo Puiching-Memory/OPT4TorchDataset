@@ -117,6 +117,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
             generator,
             args.total_iter,
             args.output,
+            args.seed,  # 添加种子参数
         )
     except Exception as e:
         print(f"错误: {e}")

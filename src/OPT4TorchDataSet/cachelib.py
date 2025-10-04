@@ -18,6 +18,7 @@ def precompute_opt_indices(
     generator,
     total_iter: int,
     persist_path: Union[str, Path],
+    seed: Optional[int] = None,
 ) -> None:
     """CLI 预计算 OPT 缓存索引。
     
@@ -26,6 +27,7 @@ def precompute_opt_indices(
         generator: 随机数生成器
         total_iter: 总迭代次数
         persist_path: 保存路径
+        seed: 随机种子
     """
     future_index = list(
         sampler(
@@ -49,17 +51,36 @@ def precompute_opt_indices(
             {
                 "future_index": future_index,
                 "future_map": dict(future_map),
+                "seed": seed,
             },
             handle,
             protocol=pickle.HIGHEST_PROTOCOL,
         )
 
 
-def _load_precomputed_data(path: Union[str, Path]) -> Tuple[List[Any], Dict[Any, List[int]]]:
-    """加载预计算数据。"""
+def _load_precomputed_data(path: Union[str, Path], expected_seed: Optional[int] = None) -> Tuple[List[Any], Dict[Any, List[int]]]:
+    """加载预计算数据。
+    
+    Args:
+        path: 预计算文件路径
+        expected_seed: 期望的种子值，如果提供则会进行验证
+        
+    Raises:
+        ValueError: 当种子不匹配时抛出异常
+    """
     source = Path(path)
     with source.open("rb") as handle:
         payload = pickle.load(handle)
+    
+    # 检查种子是否一致
+    if expected_seed is not None:
+        saved_seed = payload.get("seed")
+        if saved_seed != expected_seed:
+            raise ValueError(
+                f"预计算文件种子与当前种子不一致。预计算文件种子: {saved_seed}, "
+                f"当前种子: {expected_seed}。请确保使用相同的种子或重新生成预计算文件。"
+            )
+    
     return payload["future_index"], payload["future_map"]
 
 
@@ -159,6 +180,7 @@ def generate_precomputed_file(
                 {
                     "future_index": future_index,
                     "future_map": dict(future_map),
+                    "seed": random_seed,
                 },
                 handle,
                 protocol=pickle.HIGHEST_PROTOCOL,
@@ -176,12 +198,13 @@ class OPTCacheDecorator:
         maxsize: int,
         prediction_window: int,
         total_iter: int,
+        seed: Optional[int] = None,
     ) -> None:
         if maxsize <= 0:
             raise ValueError("maxsize 必须为正整数")
         
         # 加载预计算数据
-        self.future_index, self.future_map = _load_precomputed_data(precomputed_path)
+        self.future_index, self.future_map = _load_precomputed_data(precomputed_path, seed)
         
         if len(self.future_index) < total_iter:
             raise ValueError("预计算结果长度不足，无法覆盖 total_iter")

@@ -17,6 +17,7 @@ class MiniImageNetDataset(Dataset):
         # 加载Hugging Face数据集
         self.dataset = load_dataset('timm/mini-imagenet',split=split)
         self.dataset = self.dataset.cast_column("image", Image(mode="RGB"))
+        
         self.transforms = v2.Compose([
             v2.ToImage(),
             v2.ToDtype(torch.float32, scale=True),
@@ -27,7 +28,6 @@ class MiniImageNetDataset(Dataset):
     def __len__(self):
         return len(self.dataset)
     
-    @cached(LFUCache(maxsize=25000))
     def __getitem__(self, idx):
         item = self.dataset[idx]
     
