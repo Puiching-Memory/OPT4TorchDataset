@@ -213,7 +213,7 @@ if __name__ == "__main__":
             opt_decorator = OPTCacheDecorator(
                 precomputed_path=precomputed_path,
                 maxsize=cache_size,
-                prediction_window=int(total_iter * 0.2),  # 预测窗口为总迭代次数的20%
+                prediction_window=int(total_iter * 1.0),
                 total_iter=total_iter,
             )
             caches.append(("OPT", size, opt_decorator))
