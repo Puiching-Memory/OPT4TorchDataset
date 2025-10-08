@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(ROOT, 'src'))
 sys.path.insert(0, ROOT)
 
 from lib.hit_rate_dataset import HitRateDataset
-from OPT4TorchDataSet.cachelib import OPTCacheDecorator
+from OPT4TorchDataSet.cachelib import OPTCacheDecorator, generate_precomputed_file
 import tempfile
 
 def save_results_to_csv(results: List[Dict], output_path: Path):
@@ -170,7 +170,6 @@ if __name__ == "__main__":
     total_iter = MAX_DATASET_SIZE * epochs
 
     cache_sizes = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-    prediction_windows = [0.01, 0.05, 0.1, 0.2, 0.5, 1.0]  # 窗口大小比例
 
     caches: List[Tuple[str, object]] = []
 
@@ -179,11 +178,7 @@ if __name__ == "__main__":
         tmp_path = tmp_file.name
     
     try:
-        opt_generator = torch.Generator()
-        opt_generator.manual_seed(0)
-        
         # 生成预计算数据
-        from OPT4TorchDataSet.cachelib import generate_precomputed_file
         generate_precomputed_file(
             dataset_size=MAX_DATASET_SIZE,
             total_iterations=total_iter,
@@ -192,29 +187,23 @@ if __name__ == "__main__":
             replacement=True
         )
 
-        # 添加WarmUp缓存（使用最小的窗口大小）
-        caches.append(
-            ("WarmUp", 0.1, OPTCacheDecorator(
-                precomputed_path=tmp_path,
-                maxsize=int(0.1 * MAX_DATASET_SIZE),
-                prediction_window=int(total_iter * prediction_windows[0]),
-                total_iter=total_iter,
-            ))
-        )
+        logger.info("OPT 缓存不再使用窗口机制，默认利用完整的未来访问信息。")
 
-        # 循环创建不同缓存大小和窗口大小的组合
+        # 为不同缓存大小创建 OPT 缓存配置
         for size in cache_sizes:
-            for window in prediction_windows:
-                caches.append((
-                    f"OPT-{window}", 
-                    size, 
-                    OPTCacheDecorator(
-                        precomputed_path=tmp_path,
-                        maxsize=int(size * MAX_DATASET_SIZE),
-                        prediction_window=int(total_iter * window),
-                        total_iter=total_iter,
-                    )
-                ))
+            cache_capacity = int(size * MAX_DATASET_SIZE)
+            if cache_capacity <= 0:
+                continue
+            caches.append((
+                "OPT",
+                size,
+                OPTCacheDecorator(
+                    precomputed_path=tmp_path,
+                    maxsize=cache_capacity,
+                    total_iter=total_iter,
+                    seed=0,
+                ),
+            ))
 
         experiment = CacheExperiment(caches=caches,
                                      batch_size=batch_size,

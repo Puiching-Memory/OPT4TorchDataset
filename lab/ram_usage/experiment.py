@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.join(ROOT, 'src'))
 sys.path.insert(0, ROOT)
 
 from lib.hit_rate_dataset import HitRateDataset
-from OPT4TorchDataSet.cachelib import make_opt_cache, precompute_opt_indices
+from OPT4TorchDataSet.cachelib import OPTCacheDecorator, generate_precomputed_file
 
 def save_results_to_csv(results: List[Dict], output_path: Path):
     """
@@ -217,24 +217,35 @@ if __name__ == "__main__":
             elif cache_type == "RR":
                 caches.append((cache_type, size, cached(RRCache(maxsize=cache_size))))
     
-    # 预计算 OPT 所需的未来索引
-    opt_generator = torch.Generator()
-    opt_generator.manual_seed(0)
-    precomputed_opt = precompute_opt_indices(
-        RandomSampler,
-        opt_generator,
-        total_iter,
-    )
+    precomputed_dir = Path(ROOT) / "precomputed"
+    precomputed_dir.mkdir(parents=True, exist_ok=True)
+    precomputed_path = precomputed_dir / "ram_usage_opt_precomputed.pkl"
+
+    if not precomputed_path.exists():
+        logger.info(f"预计算文件不存在，正在生成: {precomputed_path}")
+        generate_precomputed_file(
+            dataset_size=MAX_DATASET_SIZE,
+            total_iterations=total_iter,
+            persist_path=precomputed_path,
+            random_seed=0,
+            replacement=True,
+        )
+        logger.info("预计算文件生成完成")
 
     # 添加OPT缓存配置
     for size in cache_sizes:
         cache_size = int(size * MAX_DATASET_SIZE)
-        caches.append(("OPT", size, make_opt_cache(
-            total_iter=total_iter,
-            maxsize=cache_size,
-            prediction_window=total_iter,
-            precomputed=precomputed_opt,
-        )))
+        if cache_size > 0:
+            caches.append((
+                "OPT",
+                size,
+                OPTCacheDecorator(
+                    precomputed_path=precomputed_path,
+                    maxsize=cache_size,
+                    total_iter=total_iter,
+                    seed=0,
+                ),
+            ))
 
     experiment = CacheExperiment(caches=caches,
                                  batch_size=batch_size,

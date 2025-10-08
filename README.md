@@ -89,8 +89,8 @@ class CustomDataset(data.Dataset):
         self.cache_decorator = OPTCacheDecorator(
             precomputed_path=precomputed_path,
             maxsize=cache_size,
-            prediction_window=10000,  # 根据需要调整
-            total_iter=len(self.data_source) * 3  # 应与预计算时的total_iterations一致
+            total_iter=len(self.data_source) * 3,  # 应与预计算时的total_iterations一致
+            seed=42,
         )
         self._cached_getitem = self.cache_decorator(self._load_data)
 

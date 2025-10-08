@@ -213,8 +213,8 @@ if __name__ == "__main__":
             opt_decorator = OPTCacheDecorator(
                 precomputed_path=precomputed_path,
                 maxsize=cache_size,
-                prediction_window=int(total_iter * 1.0),
                 total_iter=total_iter,
+                seed=0,
             )
             caches.append(("OPT", size, opt_decorator))
 

@@ -5,6 +5,7 @@ import sys
 import time
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
+import math
 import torch
 import timm
 from loguru import logger
@@ -18,28 +19,30 @@ sys.path.insert(0, os.path.join(ROOT, 'src'))
 sys.path.insert(0, ROOT)
 
 from lib.mini_imagenet_dataset import MiniImageNetDataset
+from lib.ramRGB_dataset import RandomRGBDataset
 from OPT4TorchDataSet.cachelib import OPTCacheDecorator, generate_precomputed_file
 
 from cachetools import cached, LRUCache, LFUCache, FIFOCache, RRCache
 
 class ExperimentConfig:
     output_dir: str = "results"
-    models: List[str] = ["resnet50",
-                         "efficientnet_b0",
-                         "mobilenetv4_conv_small",
+    models: List[str] = ["resnet18",
                          ]
     
     batch_size: int = 16
-    num_workers: int = 0
+    num_workers: int = 2
     enable_amp: bool = True
-    epochs: int = 1
+    epochs: int = 5
+    pin_memory: bool = True
 
-    dataset_class = MiniImageNetDataset
-    dataset_params: Dict[str, Any] = {"split": "train"}
-    
-    cache_types: List[str] = ["OPT", "none", "LRU", "LFU", "FIFO", "RR"]
-    cache_size_ratio: float = 0.3  
-    prediction_window_ratio: float = 1.0
+    # dataset_class = MiniImageNetDataset
+    # dataset_params: Dict[str, Any] = {"split": "train"}
+    dataset_class = RandomRGBDataset
+    dataset_params: Dict[str, Any] = {"data_dir": "../../data/random_rgb_dataset"}
+
+
+    cache_types: List[str] = ["warmUp", "OPT", "none", "LRU", "LFU", "FIFO", "RR"]
+    cache_size_ratio: float = 0.3
 
 
 def save_results_to_csv(results: List[Dict], output_path: Path):
@@ -69,6 +72,7 @@ def save_results_to_csv(results: List[Dict], output_path: Path):
         writer.writerow(["Batch Size"] + [""] * (len(cache_types) - 1) + [results[0]["batch_size"]])
         writer.writerow(["Num Workers"] + [""] * (len(cache_types) - 1) + [results[0]["num_workers"]])
         writer.writerow(["AMP Enabled"] + [""] * (len(cache_types) - 1) + [results[0]["enable_amp"]])
+        writer.writerow(["Epochs"] + [""] * (len(cache_types) - 1) + [results[0]["epochs"]])
         writer.writerow(["Cache Size Ratio"] + [""] * (len(cache_types) - 1) + [results[0]["cache_size_ratio"]])
 
 
@@ -128,12 +132,10 @@ class CacheExperiment:
             dataset.__getitem__ = cached(cache)(wrapped_getitem)
         elif cache_type == "OPT":
             total_iterations = dataset_size * self.config.epochs
-            prediction_window = int(total_iterations * self.config.prediction_window_ratio)
             
             opt_cache = OPTCacheDecorator(
                 precomputed_path=self.precomputed_path,
                 maxsize=cache_size,
-                prediction_window=prediction_window,
                 total_iter=total_iterations,
                 seed=42
             )
@@ -157,13 +159,16 @@ class CacheExperiment:
         model = model.to(device)
 
         dataset_size = len(dataset)
+        total_iterations = dataset_size * self.config.epochs
+        batches_per_epoch = max(1, math.ceil(dataset_size / self.config.batch_size))
+        total_batches = math.ceil(total_iterations / self.config.batch_size)
 
         generator = torch.Generator()
         generator.manual_seed(42)
         sampler = RandomSampler(
             dataset,
             replacement=True,
-            num_samples=dataset_size,
+            num_samples=total_iterations,
             generator=generator,
         )
         dataloader = DataLoader(
@@ -171,6 +176,8 @@ class CacheExperiment:
             batch_size=self.config.batch_size,
             sampler=sampler,
             num_workers=self.config.num_workers,
+            persistent_workers=self.config.num_workers > 0,
+            pin_memory=self.config.pin_memory,
         )
         
         model.train()
@@ -182,9 +189,13 @@ class CacheExperiment:
         start_time = time.perf_counter()
         
         # Add progress bar for training
-        pbar = tqdm(dataloader, desc=f"Training {model_name} with {cache_type} cache")
+        pbar = tqdm(
+            dataloader,
+            total=total_batches,
+            desc=f"Training {model_name} with {cache_type} cache",
+        )
         
-        for batch_data in pbar:
+        for step, batch_data in enumerate(pbar, start=1):
             images, labels = batch_data
             images = images.to(device, non_blocking=True)
             labels = labels.to(device, non_blocking=True)
@@ -197,6 +208,11 @@ class CacheExperiment:
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
+
+            current_epoch = 1 + (step - 1) // batches_per_epoch
+            next_epoch_boundary = step % batches_per_epoch == 0 or step == total_batches
+            if next_epoch_boundary:
+                pbar.set_postfix(epoch=f"{current_epoch}/{self.config.epochs}", loss=float(loss.item()))
         
         total_training_time = time.perf_counter() - start_time
         logger.info(f"Total time: {total_training_time:.4f}s")
@@ -211,6 +227,7 @@ class CacheExperiment:
             "enable_amp": self.config.enable_amp,
             "dataset_class": self.config.dataset_class.__name__,
             "cache_size_ratio": self.config.cache_size_ratio,
+            "epochs": self.config.epochs,
         }
         
         return result

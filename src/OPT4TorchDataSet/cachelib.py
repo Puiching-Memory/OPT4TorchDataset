@@ -1,16 +1,100 @@
 import heapq
+import multiprocessing as mp
+from multiprocessing.managers import SyncManager
 import pickle
+import warnings
 from collections import defaultdict
+from enum import Enum
 from functools import wraps
 from itertools import count
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
+try:  # torch is optional for some utility functions
+    import torch
+except ImportError:  # pragma: no cover - torch is expected to be installed in runtime env
+    torch = None
 
 __all__ = [
     "precompute_opt_indices",
     "generate_precomputed_file",
     "OPTCacheDecorator",
 ]
+
+
+class _CacheEntryState(Enum):
+    READY = 1
+    PENDING = 2
+
+
+_GLOBAL_MANAGER: Optional[SyncManager] = None
+
+
+def _get_sync_manager() -> SyncManager:
+    global _GLOBAL_MANAGER
+    if _GLOBAL_MANAGER is None:
+        _GLOBAL_MANAGER = mp.Manager()
+    return _GLOBAL_MANAGER
+
+
+def _maybe_share_tensor(tensor):
+    if tensor.is_cuda:
+        tensor = tensor.cpu()
+    if tensor.requires_grad:
+        tensor = tensor.detach()
+    if not tensor.is_contiguous():
+        tensor = tensor.contiguous()
+    if not tensor.is_shared():
+        tensor.share_memory_()
+    return tensor
+
+
+def _prepare_for_cache(value: Any) -> Any:
+    if torch is None:
+        return value
+
+    if torch.is_tensor(value):
+        return _maybe_share_tensor(value)
+
+    if isinstance(value, (list, tuple)):
+        prepared = [_prepare_for_cache(item) for item in value]
+        return type(value)(prepared)
+
+    if isinstance(value, dict):
+        return {k: _prepare_for_cache(v) for k, v in value.items()}
+
+    return value
+
+
+class _SharedOPTState:
+    __slots__ = (
+        "maxsize",
+        "cache",
+        "condition",
+        "current",
+        "hits",
+        "miss",
+        "evict",
+    )
+
+    def __init__(self, maxsize: int) -> None:
+        manager = _get_sync_manager()
+        self.maxsize = maxsize
+        self.cache = manager.dict()  # type: ignore[assignment]
+        self.condition = manager.Condition()  # type: ignore[assignment]
+        self.current = manager.Value("Q", 0)
+        self.hits = manager.Value("Q", 0)
+        self.miss = manager.Value("Q", 0)
+        self.evict = manager.Value("Q", 0)
+
+    def reset(self) -> None:
+        with self.condition:
+            self.cache.clear()
+            self.current.value = 0
+            self.hits.value = 0
+            self.miss.value = 0
+            self.evict.value = 0
+            self.condition.notify_all()
 
 
 def precompute_opt_indices(
@@ -196,7 +280,6 @@ class OPTCacheDecorator:
         self,
         precomputed_path: Union[str, Path],
         maxsize: int,
-        prediction_window: int,
         total_iter: int,
         seed: Optional[int] = None,
     ) -> None:
@@ -211,15 +294,17 @@ class OPTCacheDecorator:
         
         self.future_index = self.future_index[:total_iter]
         self.maxsize = maxsize
-        self.prediction_window = prediction_window
         self.total_iter = total_iter
         
         # 计算下次出现位置
         self._next_occurrence = self._compute_next_occurrences()
-        self._inf_marker = self.total_iter + self.prediction_window + 1
         
-        # 预计算淘汰计划
-        self._eviction_plan = self._build_eviction_plan()
+        # 预计算淘汰计划与缓存决策
+        (
+            self._eviction_plan,
+            self._cache_decision,
+            self._release_on_exit,
+        ) = self._build_eviction_plan()
         
         # 运行期状态
         self._current = 0
@@ -227,6 +312,8 @@ class OPTCacheDecorator:
         self._hits = 0
         self._miss = 0
         self._evict = 0
+        self._enable_multi_worker = True
+        self._shared_state = _SharedOPTState(maxsize)
 
     def _compute_next_occurrences(self) -> List[Optional[int]]:
         """计算每个位置的下次出现位置。"""
@@ -238,20 +325,13 @@ class OPTCacheDecorator:
             last_seen[key] = position
         return next_occurrence
 
-    def _encode_next_value(self, position: int, next_pos: Optional[int]) -> int:
-        """编码下次访问位置。"""
-        if next_pos is None:
-            return self._inf_marker
-        distance = next_pos - position
-        if distance > self.prediction_window:
-            return self._inf_marker
-        return next_pos
-
-    def _build_eviction_plan(self) -> List[Optional[Tuple[Any, bool]]]:
-        """构建淘汰计划。"""
+    def _build_eviction_plan(self) -> Tuple[List[Optional[Tuple[Any, bool]]], List[bool], List[Optional[Any]]]:
+        """构建淘汰计划、缓存决策以及按访问释放计划。"""
         plan: List[Optional[Tuple[Any, bool]]] = [None] * self.total_iter
+        cache_decision: List[bool] = [False] * self.total_iter
+        release_on_exit: List[Optional[Any]] = [None] * self.total_iter
         if self.maxsize == 0:
-            return plan
+            return plan, cache_decision, release_on_exit
 
         cache_next: Dict[Any, int] = {}
         heap: List[Tuple[int, int, Any]] = []
@@ -260,11 +340,18 @@ class OPTCacheDecorator:
         for position in range(self.total_iter):
             key = self.future_index[position]
             next_pos = self._next_occurrence[position]
-            next_value = self._encode_next_value(position, next_pos)
 
             if key in cache_next:
-                cache_next[key] = next_value
-                heapq.heappush(heap, (-next_value, next(ticket), key))
+                if next_pos is None:
+                    cache_next.pop(key, None)
+                    release_on_exit[position] = key
+                else:
+                    cache_next[key] = next_pos
+                    heapq.heappush(heap, (-next_pos, next(ticket), key))
+                continue
+
+            if next_pos is None:
+                # 不会再访问，跳过缓存
                 continue
 
             if len(cache_next) >= self.maxsize:
@@ -283,25 +370,35 @@ class OPTCacheDecorator:
                 if victim_key is None:
                     raise RuntimeError("未能找到可淘汰的元素")
                 cache_next.pop(victim_key, None)
-                future_exhaust = victim_value is None or victim_value >= self._inf_marker
-                plan[position] = (victim_key, future_exhaust)
+                plan[position] = (victim_key, False)
 
-            cache_next[key] = next_value
-            heapq.heappush(heap, (-next_value, next(ticket), key))
+            cache_next[key] = next_pos
+            cache_decision[position] = True
+            heapq.heappush(heap, (-next_pos, next(ticket), key))
 
-        return plan
+        return plan, cache_decision, release_on_exit
 
     def stats(self) -> Dict[str, Any]:
         """返回缓存统计信息。"""
-        total = self._hits + self._miss
-        hit_rate = (self._hits / total) if total else 0.0
+        shared_hits = int(self._shared_state.hits.value)
+        shared_miss = int(self._shared_state.miss.value)
+        shared_evict = int(self._shared_state.evict.value)
+        total_hits = self._hits + shared_hits
+        total_miss = self._miss + shared_miss
+        total = total_hits + total_miss
+        hit_rate = (total_hits / total) if total else 0.0
+        shared_cache_size = 0
+        for entry in list(self._shared_state.cache.values()):
+            if isinstance(entry, tuple) and entry and entry[0] == _CacheEntryState.READY.value:
+                shared_cache_size += 1
+
         return {
-            "current": self._current,
-            "size": len(self._cache),
+            "current": self._current + int(self._shared_state.current.value),
+            "size": len(self._cache) + shared_cache_size,
             "capacity": self.maxsize,
-            "hits": self._hits,
-            "miss": self._miss,
-            "evict": self._evict,
+            "hits": total_hits,
+            "miss": total_miss,
+            "evict": self._evict + shared_evict,
             "hit_rate": hit_rate,
         }
 
@@ -310,50 +407,189 @@ class OPTCacheDecorator:
         self._current = 0
         self._cache.clear()
         self._hits = self._miss = self._evict = 0
+        self._shared_state.reset()
 
     def __call__(self, func: Callable):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            if self._current >= self.total_iter:
-                raise IndexError(
-                    f"访问次数超过预生成未来序列长度 total_iter={self.total_iter}"
+            if self.maxsize == 0:
+                return func(*args, **kwargs)
+
+            worker_info = None
+            if self._enable_multi_worker:
+                try:
+                    from torch.utils.data import get_worker_info  # type: ignore
+                except (ImportError, RuntimeError):
+                    worker_info = None
+                else:
+                    worker_info = get_worker_info()
+
+            if worker_info is None:
+                return self._single_worker_execute(func, args, kwargs)
+
+            if torch is None:
+                warnings.warn(
+                    "检测到多 Worker DataLoader，但当前环境缺少 torch 库，OPT 缓存将退回单Worker模式。",
+                    RuntimeWarning,
+                    stacklevel=2,
                 )
+                return self._single_worker_execute(func, args, kwargs)
 
-            # 获取访问的索引（假设是第二个参数）
-            try:
-                input_index = args[1]
-            except IndexError:
-                raise ValueError("被装饰函数需要至少两个参数: (self_or_obj, index)")
+            return self._multi_worker_execute(func, args, kwargs)
 
-            # 命中检查
-            if input_index in self._cache:
-                self._hits += 1
-                result = self._cache[input_index]
-                self._current += 1
-                return result
+        return wrapper
 
-            # 未命中 - 执行实际计算
-            self._miss += 1
-            result = func(*args, **kwargs)
+    @staticmethod
+    def _extract_index(args: Tuple[Any, ...]) -> Any:
+        try:
+            return args[1]
+        except IndexError as exc:
+            raise ValueError("被装饰函数需要至少两个参数: (self_or_obj, index)") from exc
 
-            # 根据淘汰计划执行淘汰
+    def _single_worker_execute(
+        self,
+        func: Callable,
+        args: Tuple[Any, ...],
+        kwargs: Dict[str, Any],
+    ) -> Any:
+        if self._current >= self.total_iter:
+            raise IndexError(
+                f"访问次数超过预生成未来序列长度 total_iter={self.total_iter}"
+            )
+
+        input_index = self._extract_index(args)
+
+        if input_index in self._cache:
+            self._hits += 1
+            result = self._cache[input_index]
+            release_key = (
+                self._release_on_exit[self._current]
+                if self.maxsize > 0
+                else None
+            )
+            if release_key is not None:
+                removed = self._cache.pop(release_key, None)
+                if removed is not None:
+                    self._evict += 1
+            self._current += 1
+            return result
+
+        self._miss += 1
+        result = func(*args, **kwargs)
+
+        should_cache = self._cache_decision[self._current] if self.maxsize > 0 else False
+        if should_cache and self.maxsize > 0:
             plan_entry = self._eviction_plan[self._current]
             if plan_entry is not None:
                 victim_key, _ = plan_entry
                 if victim_key is not None:
-                    if victim_key not in self._cache:
-                        raise RuntimeError(
-                            f"预计算淘汰计划与实际缓存不一致: position={self._current}, victim={victim_key}"
-                        )
-                    self._cache.pop(victim_key, None)
-                    self._evict += 1
-            elif len(self._cache) >= self.maxsize:
-                raise RuntimeError(
-                    f"OPT 淘汰计划缺失导致缓存溢出: position={self._current}, key={input_index}"
-                )
-
+                    evicted = self._cache.pop(victim_key, None)
+                    if evicted is not None:
+                        self._evict += 1
             self._cache[input_index] = result
-            self._current += 1
-            return result
 
-        return wrapper
+        release_key = (
+            self._release_on_exit[self._current]
+            if self.maxsize > 0
+            else None
+        )
+        if release_key is not None:
+            removed = self._cache.pop(release_key, None)
+            if removed is not None:
+                self._evict += 1
+
+        self._current += 1
+        return result
+
+    def _multi_worker_execute(
+        self,
+        func: Callable,
+        args: Tuple[Any, ...],
+        kwargs: Dict[str, Any],
+    ) -> Any:
+        state = self._shared_state
+        position: Optional[int] = None
+        should_cache = False
+
+        while True:
+            with state.condition:
+                if position is None:
+                    current = state.current.value
+                    if current >= self.total_iter:
+                        raise IndexError(
+                            f"访问次数超过预生成未来序列长度 total_iter={self.total_iter}"
+                        )
+                    state.current.value = current + 1
+                    position = current
+
+                input_index = self._extract_index(args)
+                entry = state.cache.get(input_index)
+                if entry is not None:
+                    status, payload = entry
+                    if status == _CacheEntryState.READY.value:
+                        release_key = (
+                            self._release_on_exit[position]
+                            if self.maxsize > 0
+                            else None
+                        )
+                        if release_key is not None:
+                            existing = state.cache.pop(release_key, None)
+                            if existing is not None:
+                                state.evict.value += 1
+                                state.condition.notify_all()
+                        state.hits.value += 1
+                        return payload
+                    state.condition.wait()
+                    continue
+
+                state.miss.value += 1
+                should_cache = (
+                    self._cache_decision[position] if self.maxsize > 0 else False
+                )
+                if should_cache and self.maxsize > 0:
+                    plan_entry = self._eviction_plan[position]
+                    if plan_entry is not None:
+                        victim_key, _ = plan_entry
+                        if victim_key is not None:
+                            while True:
+                                victim_entry = state.cache.get(victim_key)
+                                if victim_entry is None:
+                                    break
+                                victim_status, _ = victim_entry
+                                if victim_status == _CacheEntryState.PENDING.value:
+                                    state.condition.wait()
+                                    continue
+                                state.cache.pop(victim_key, None)
+                                state.evict.value += 1
+                                break
+
+                if should_cache and self.maxsize > 0:
+                    state.cache[input_index] = (_CacheEntryState.PENDING.value, None)
+                break
+
+        result = func(*args, **kwargs)
+        cached_result = _prepare_for_cache(result)
+
+        release_key = (
+            self._release_on_exit[position] if self.maxsize > 0 else None
+        )
+
+        if should_cache and self.maxsize > 0:
+            with state.condition:
+                state.cache[input_index] = (
+                    _CacheEntryState.READY.value,
+                    cached_result,
+                )
+                if release_key is not None:
+                    existing = state.cache.pop(release_key, None)
+                    if existing is not None:
+                        state.evict.value += 1
+                state.condition.notify_all()
+        elif release_key is not None:
+            with state.condition:
+                existing = state.cache.pop(release_key, None)
+                if existing is not None:
+                    state.evict.value += 1
+                state.condition.notify_all()
+
+        return cached_result
