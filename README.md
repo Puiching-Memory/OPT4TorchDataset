@@ -3,7 +3,8 @@ Plug-and-Play Optimal Page Replacement Algorithm (OPT) for Torch Dataset
 
 ## What is OPT?
 
-**OPT (Optimal Page Replacement Algorithm)** 是理论上最优的页面替换算法，也被称为 Bélády's algorithm。它通过预知未来的访问模式来决定当前应该替换缓存中的哪个数据项，从而达到最小的缓存未命中率。
+**OPT (Optimal Page Replacement Algorithm)** 是理论上最优的页面替换算法，也被称为 Bélády's algorithm。
+它通过预知未来的访问模式来决定当前应该替换缓存中的哪个数据项，从而达到最小的缓存未命中率。
 
 
 - OPT需要知道未来的访问序列
@@ -14,12 +15,10 @@ Plug-and-Play Optimal Page Replacement Algorithm (OPT) for Torch Dataset
 - 提升数据加载速度
 - 提高缓存命中率，比LRU、LFU等传统算法更高效
 
-## Why OPT NOT work?
-思路：建立简单的访问模型（Zipf/Markov），分析在何种分布下 OPT 明显优于 LRU/LFU，给出上界/下界或渐近分析。
-创新点：提供理论或半理论解释，减少“纯工程”质疑。
-验证：对 synthetic traces（Zipf α 不同, Markov 转移）跑仿真并绘制空间/命中率曲线。
-MVP：一页数学推导 + 一套仿真实验图（heatmap）。
-产出：补充材料中的理论段落和 synthetic results。
+## OPT的局限性
+
+**在多进程数据加载（`num_workers > 0`）中，OPT 和其他所有缓存方法的收益都显著降低。**  
+在多进程数据加载中，多个工作进程可以并行预加载数据，这本身就能掩盖数据传输延迟。
 
 ## Install
 ```bash
@@ -36,20 +35,19 @@ from OPT4TorchDataSet.cachelib import generate_precomputed_file, OPTCacheDecorat
 from torch.utils.data import DataLoader
 
 # Step 1: 离线生成预计算文件（一次性）
-# ⭐ 注意：必须指定 maxsize（缓存大小）
 generate_precomputed_file(
     dataset_size=10000,
     total_iterations=100000,
     persist_path="precomputed/my_experiment.pkl",
     random_seed=0,
     replacement=True,
-    maxsize=3000  # ⭐ 关键：预计算所需的缓存大小
+    maxsize=3000
 )
 
-# Step 2: 运行时创建缓存装饰器（初始化极快 <100ms）
+# Step 2: 运行时创建缓存装饰器
 decorator = OPTCacheDecorator(
     precomputed_path="precomputed/my_experiment.pkl",
-    maxsize=3000,           # ⚠️ 必须与预计算时的 maxsize 一致
+    maxsize=3000, # 必须与预计算时的maxsize一致
     total_iter=100000
 )
 
@@ -60,14 +58,13 @@ dataset.__getitem__ = decorator(dataset.__getitem__)
 # 使用数据加载器
 dataloader = DataLoader(dataset, batch_size=32)
 for batch in dataloader:
-    # 直接使用，无需额外计算
     pass
 ```
 
 ### Method 2: CLI (离线预计算)
 
 ```bash
-# 生成预计算文件（需要指定缓存大小）
+
 python -m src.OPT4TorchDataSet.cli \
     --dataset-size 10000 \
     --total-iter 100000 \
@@ -82,99 +79,14 @@ python -m src.OPT4TorchDataSet.cli \
 - `--no-replacement`: 禁用有放回采样（可选）
 
 
-### 在PyTorch数据集中使用
-```python
-import torch
-import torch.utils.data as data
-from OPT4TorchDataSet.cachelib import (
-    generate_precomputed_file,
-    OPTCacheDecorator
-)
-
-class CustomDataset(data.Dataset):
-    def __init__(self, data_source, cache_size=None, precomputed_path=None):
-        self.data_source = data_source
-        
-        # 如果提供了预计算文件，设置缓存
-        if precomputed_path and cache_size:
-            self.setup_cache(precomputed_path, cache_size)
-
-    def setup_cache(self, precomputed_path, cache_size):
-        """设置OPT缓存"""
-        # 检查预计算文件是否存在，不存在则自动生成
-        if not os.path.exists(precomputed_path):
-            generate_precomputed_file(
-                dataset_size=len(self.data_source),
-                total_iterations=len(self.data_source) * 3,  # 假设训练3个epoch
-                persist_path=precomputed_path,
-                random_seed=42
-            )
-        
-        self.cache_decorator = OPTCacheDecorator(
-            precomputed_path=precomputed_path,
-            maxsize=cache_size,
-            total_iter=len(self.data_source) * 3,  # 应与预计算时的total_iterations一致
-            seed=42,
-        )
-        self._cached_getitem = self.cache_decorator(self._load_data)
-
-    def _load_data(self, obj, index):
-        """实际的数据加载方法（会被缓存）"""
-        # 在这里实现实际的数据加载逻辑
-        return self.data_source[index]
-
-    def __len__(self):
-        return len(self.data_source)
-    
-    def __getitem__(self, index):
-        if hasattr(self, '_cached_getitem'):
-            return self._cached_getitem(self, index)
-        else:
-            return self._load_data(self, index)
-
-# 使用示例
-if __name__ == "__main__":
-    from torch.utils.data import DataLoader, RandomSampler
-
-    # 创建数据集
-    data_source = list(range(1000))  # 示例数据
-    dataset = CustomDataset(
-        data_source,
-        cache_size=300,  # 缓存30%的数据
-        precomputed_path="./precomputed/opt_cache.pkl"
-    )
-    
-    # 创建采样器
-    sampler = RandomSampler(
-        dataset,
-        replacement=True,
-        num_samples=len(dataset) * 3,
-        generator=torch.Generator().manual_seed(42)
-    )
-    
-    # 创建数据加载器
-    dataloader = DataLoader(
-        dataset=dataset,
-        batch_size=32,
-        shuffle=False,  # 使用sampler时必须为False
-        num_workers=4,
-        pin_memory=True,
-        sampler=sampler
-    )
-
-    # 使用数据加载器
-    for batch_idx, data in enumerate(dataloader):
-        if batch_idx >= 10:  # 测试10个批次
-            break
-        print(f"批次 {batch_idx}: {data.shape}")
-```
-
 **重要提醒**：
 - 训练时使用的采样器配置必须与预计算时完全一致
 - 包括相同的随机种子、相同的采样器类型和参数
 - 总访问次数也必须匹配，否则会抛出异常
 
-## 本地开发使用
+## 开发者指南
+
+### 本地开发使用
 
 如果你没有安装包，而是直接使用源码，可以通过以下方式启动CLI：
 
@@ -186,85 +98,75 @@ python -m src.OPT4TorchDataSet.cli \
     --seed 42
 ```
 
+### 环境配置
 
-## Environment (for development only)
+#### 系统要求
+
+已测试的环境：
+- Ubuntu 24.04 + CUDA 12.8 + H800 (sm90)
+- Windows 11 + CUDA 12.9.1 + NVIDIA 4060Ti (sm89)
+- Windows 11 + CUDA 13.0.2 + NVIDIA 4060Ti (sm89)
+
+#### 安装步骤
+
+**1. 系统依赖（Linux）**
 ```bash
-# tested ubuntu 24.04 cuda 12.8 h800 sm90
-# tested windows11 cuda 12.9.1 NVIDIA 4060Ti sm89
-# tested windows11 cuda 13.0.2 NVIDIA 4060Ti sm89
-apt update
-apt upgrade
+apt update && apt upgrade
 apt install build-essential
+```
 
+**2. 创建 Conda 环境**
+```bash
 conda create -n opt4 python=3.14
 conda activate opt4
+```
+
+**3. 安装 PyTorch**
+```bash
 pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+```
+
+**4. 安装项目依赖**
+```bash
 pip install -r requirements.txt
+```
 
-# install triton for windows(optional)
+**5. 可选：安装 Triton（Windows）**
+```bash
 pip install -U "triton-windows<3.5"
+```
 
-# login swanlab (optional)
+#### 可选配置
+
+**登录 SwanLab**（用于实验追踪）
+```bash
 swanlab login
-# then following https://docs.swanlab.cn/guide_cloud/general/quick-start.html
+# 然后参考 https://docs.swanlab.cn/guide_cloud/general/quick-start.html
+```
 
-# choice device (optional)
+**选择 GPU 设备**
+```bash
 export CUDA_VISIBLE_DEVICES=2
+```
 
-# set mirror (optional)
+**设置 Hugging Face 镜像**（提升下载速度）
+```bash
 export HF_ENDPOINT=https://hf-mirror.com
+# 或在 Windows 上
 $env:HF_ENDPOINT = "https://hf-mirror.com"
 ```
 
-## Dataset
+### 构建 Python 包
+
 ```bash
-hf download --repo-type dataset ILSVRC/imagenet-1k --cache-dir ./data/imagenet-1k --token {your_token_here}
-hf download --repo-type dataset timm/mini-imagenet --cache-dir ./data/mini-imagenet
-```
-
-## Experiment timm/mini-imagenet
-dataset: mini-imagenet
-device: NVIDIA H800 sm90 CUDA 12.9  
-system: ubuntu 24.04  
-python: 3.13.5  
-cachetools: 6.2.0  
-OPT: 1.0.0  
-torch: 2.8.0 compiled True  
-cython: OFF  
-seed: 0  
-DataIter summary: 977 (50000)  
-Epoch: 10  
-num_workers: 16  
-batch_size: 512  
-
-### Training Speed - Method (one device)
-
-Cache Size: 25000 (50% dataset) (? GB RAM)
-
-| model                        | BaseLine | OPT ON | LRU ON | LFU ON | FIFO ON | RR ON |
-| ---------------------------- | -------- | ------ | ------ | ------ | ------- | ----- |
-| resnet50                     | 5:21±    | 4:36±  | 4:44±  | 4:44±  | 4:41±   | 4:47± |
-| efficientnet_b0              | 5:34±    | 4:46±  | 4:49±  | 4:50±  | 4:59±   | 4:52± |
-| mobilenetv4_conv_small       | 5:07±    | 3:12±  | 3:16±  | 3:14±  | 3:16±   | 3:15± |
-| convnext_base                | 6:54±    | 6:10±  | 6:14±  | 6:23±  | 6:18±   | 6:10± |
-| deit3_small_patch16_224      | 4:33±    | 3:17±  | 3:15±  | 3:16±  | 3:13±   | 3:16± |
-| vit_small_patch8_224         | 6:36±    | 6:58±  | 6:33±  | 6:35±  | 6:39±   | 6:41± |
-| swin_tiny_patch4_window7_224 | 4:09±    | 4:08±  | 3:59±  | 4:03±  | 3:59±   | 6:21± |
-
-
-log:https://swanlab.cn/@Sail2Dream/opt4/overview
-
-## Experiment CIFAR-10
-
-## Experiment MLP
-
-### Hit rate - Method
-
-### Hit rate - Cache Size
-
-## build up whl
-```bash
+# 安装构建工具
 pip install build
+
+# 构建 wheel 包
 python -m build
+
+# 安装本地 wheel 包
 pip install dist/opt4torchdataset-1.0.0-cp313-cp313-linux_x86_64.whl --force-reinstall
 ```
+
+## Experiment
