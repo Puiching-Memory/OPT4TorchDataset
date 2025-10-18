@@ -2,7 +2,6 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision.datasets import ImageFolder
 from torchvision.transforms import v2
-import types
 from loguru import logger
 
 
@@ -21,15 +20,15 @@ class RandomRGBDataset(ImageFolder):
         ])
         
         self.miss = 0
-        self._getitem_impl = types.MethodType(self._raw_getitem, self)
+        self._getitem_impl = self._raw_getitem
         self._generator = torch.Generator()
         self._generator.manual_seed(0)
     
-    def _raw_getitem(self, self_obj, idx):
-        self_obj.miss += 1
+    def _raw_getitem(self, idx):
+        self.miss += 1
         # ImageFolder's __getitem__ returns (PIL.Image, class_index)
-        image, label = super(RandomRGBDataset, self_obj).__getitem__(idx)
-        image = self_obj.transforms(image)
+        image, label = super(RandomRGBDataset, self).__getitem__(idx)
+        image = self.transforms(image)
         return image, label
     
     def __getitem__(self, idx):
@@ -43,7 +42,7 @@ class RandomRGBDataset(ImageFolder):
     
     def setCache(self, cacheMethod):
         wrapped = cacheMethod(self._raw_getitem)
-        self._getitem_impl = types.MethodType(wrapped, self)
+        self._getitem_impl = wrapped
     
     def getGenerator(self):
         return self._generator

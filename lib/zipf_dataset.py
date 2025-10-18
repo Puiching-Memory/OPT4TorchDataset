@@ -1,6 +1,5 @@
-import types
-from torch.utils.data import Dataset
 import torch
+from torch.utils.data import Dataset
 import numpy as np
 
 # 导入HitRateDataset
@@ -53,7 +52,7 @@ class ZipfDataset(HitRateDataset):
         """
         return self.N
     
-    def _raw_getitem(self, self_obj, idx):
+    def _raw_getitem(self, idx):
         """
         获取指定索引的数据项，重写父类方法以适配ZipfDataset
         
@@ -64,7 +63,7 @@ class ZipfDataset(HitRateDataset):
             数据项（在此实现中直接返回索引）
         """
         # 调用父类方法增加miss计数
-        super()._raw_getitem(self_obj, idx)
+        self.miss += 1
         
         # 检查索引是否有效
         if idx < 0 or idx >= self.N:

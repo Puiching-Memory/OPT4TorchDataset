@@ -30,7 +30,7 @@ class ExperimentConfig:
                          ]
     
     batch_size: int = 16
-    num_workers: int = 2
+    num_workers: int = 0  # 改为 0 以避免 Windows 多进程 pickle 问题
     enable_amp: bool = True
     epochs: int = 5
     pin_memory: bool = True
@@ -94,18 +94,23 @@ class CacheExperiment:
         total_iterations = dataset_size * self.config.epochs
         cache_size = int(dataset_size * self.config.cache_size_ratio)
         
-        self.precomputed_path = self.output_dir / "opt_precomputed.pkl"
+        # 使用统一的预计算目录
+        precomputed_dir = Path(__file__).parent.parent.parent / "precomputed"
+        precomputed_dir.mkdir(parents=True, exist_ok=True)
+        self.precomputed_path = precomputed_dir / "opt_precomputed_training_speed.pkl"
         
-        generate_precomputed_file(
-            dataset_size=dataset_size,
-            total_iterations=total_iterations,
-            persist_path=self.precomputed_path,
-            random_seed=42,
-            replacement=True,
-            maxsize=cache_size
-        )
+        # 如果文件不存在则生成
+        if not self.precomputed_path.exists():
+            generate_precomputed_file(
+                dataset_size=dataset_size,
+                total_iterations=total_iterations,
+                persist_path=self.precomputed_path,
+                random_seed=42,
+                replacement=True,
+                maxsize=cache_size
+            )
         
-        logger.info(f"Generated OPT precomputed file: {self.precomputed_path}")
+        logger.info(f"Using OPT precomputed file: {self.precomputed_path}")
 
     def _setup_dataset(self, cache_type: str):
         """Setup dataset with specified cache type"""
@@ -125,13 +130,8 @@ class CacheExperiment:
             }
             
             cache = cache_classes[cache_type](maxsize=cache_size)
-            
-            # 创建一个包装函数来确保正确传递索引参数
-            original_getitem = dataset.__getitem__
-            def wrapped_getitem(idx):
-                return original_getitem(idx)
-            
-            dataset.__getitem__ = cached(cache)(wrapped_getitem)
+            # 使用 setCache 方法应用缓存装饰器
+            dataset.setCache(cached(cache))
         elif cache_type == "OPT":
             total_iterations = dataset_size * self.config.epochs
             
@@ -141,12 +141,8 @@ class CacheExperiment:
                 total_iter=total_iterations
             )
             
-            # Apply cache decorator to __getitem__ method
-            original_getitem = dataset.__getitem__
-            def wrapped_getitem(idx):
-                return original_getitem(idx)
-            
-            dataset.__getitem__ = opt_cache(wrapped_getitem)
+            # 使用 setCache 方法应用 OPT 缓存装饰器
+            dataset.setCache(opt_cache)
             
         return dataset
 

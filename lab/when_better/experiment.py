@@ -99,10 +99,13 @@ class CacheExperiment:
 
         self.output_dir.mkdir(exist_ok=True)
 
-    def _run_single_experiment(self) -> float:
+    def _run_single_experiment(self, cache) -> float:
         """Run single experiment focused on speed and time cost"""
         
+        # 创建新的数据集实例，确保每次实验都从干净状态开始
         dataset = deepcopy(self.dataset)
+        # 应用缓存
+        dataset.setCache(cache)
         
         dataloader = DataLoader(dataset,
                                 batch_size=self.batch_size,
@@ -128,8 +131,7 @@ class CacheExperiment:
         results = []
         
         for name, cache_size, cache in self.caches:
-            self.dataset.setCache(cache)
-            miss_count = self._run_single_experiment()
+            miss_count = self._run_single_experiment(cache)
             total_accesses = len(self.dataset) * self.epochs
             hit_rate = (total_accesses - miss_count) / total_accesses  # 命中率是 0-1 之间的小数
             
@@ -142,7 +144,6 @@ class CacheExperiment:
                 "zipf_alpha": self.zipf_alpha
             })
             
-            self.dataset.resetMissCount()
             logger.info(f"Cache: {name} hit rate: {hit_rate:.2%}")
 
         return results

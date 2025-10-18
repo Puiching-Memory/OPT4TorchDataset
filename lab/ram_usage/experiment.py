@@ -100,7 +100,7 @@ class CacheExperiment:
 
         self.output_dir.mkdir(exist_ok=True)
 
-    def _run_single_experiment(self) -> Dict:
+    def _run_single_experiment(self, cache) -> Dict:
         """Run single experiment focused on RAM usage"""
         
         # 强制进行垃圾回收以获得更准确的基线内存使用量
@@ -109,7 +109,10 @@ class CacheExperiment:
         # 获取初始内存使用量
         initial_ram = psutil.Process().memory_info().rss / 1024 / 1024  # MB
         
+        # 创建新的数据集实例，确保每次实验都从干净状态开始
         dataset = deepcopy(self.dataset)
+        # 应用缓存
+        dataset.setCache(cache)
         
         # 获取数据集加载后的内存使用量
         dataset_loaded_ram = psutil.Process().memory_info().rss / 1024 / 1024  # MB
@@ -169,8 +172,7 @@ class CacheExperiment:
         results = []
         
         for name, cache_size, cache in self.caches:
-            self.dataset.setCache(cache)
-            metrics = self._run_single_experiment()
+            metrics = self._run_single_experiment(cache)
             
             # 计算各种RAM使用量指标
             ram_usage = metrics["final_ram"] - metrics["initial_ram"]
@@ -185,7 +187,6 @@ class CacheExperiment:
                 "entry_count": entry_count
             })
             
-            self.dataset.resetMissCount()
             logger.info(f"Cache: {name} RAM usage: {ram_usage:.2f} MB, Peak: {peak_ram_usage:.2f} MB, Entries: {entry_count}")
 
         # 保存结果到CSV文件

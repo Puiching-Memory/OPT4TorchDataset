@@ -1,20 +1,20 @@
-import types
-from torch.utils.data import Dataset, DataLoader, RandomSampler
 import torch
+from torch.utils.data import Dataset, DataLoader, RandomSampler
+
 
 class HitRateDataset(Dataset):
     def __init__(self, size=10000):
         self.miss = 0
         self.dataset = list(range(size))
-        self._getitem_impl = types.MethodType(self._raw_getitem, self)
+        self._getitem_impl = self._raw_getitem
         self._generator = torch.Generator()
         self._generator.manual_seed(0)
 
     def __len__(self):
         return len(self.dataset)
     
-    def _raw_getitem(self, self_obj, idx):
-        self_obj.miss += 1
+    def _raw_getitem(self, idx):
+        self.miss += 1
         return idx
 
     def __getitem__(self, idx):
@@ -28,7 +28,7 @@ class HitRateDataset(Dataset):
 
     def setCache(self, cacheMethod):
         wrapped = cacheMethod(self._raw_getitem)
-        self._getitem_impl = types.MethodType(wrapped, self)
+        self._getitem_impl = wrapped
 
     def getGenerator(self):
         return self._generator

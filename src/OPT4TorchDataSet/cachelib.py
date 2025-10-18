@@ -311,10 +311,18 @@ class OPTCacheDecorator:
 
     @staticmethod
     def _extract_index(args: Tuple[Any, ...]) -> Any:
+        # 处理两种情况：
+        # 1. args = (self, index) - 当装饰器装饰的是未绑定方法时
+        # 2. args = (index,) - 当装饰器装饰的是已绑定方法或函数时
         try:
-            return args[1]
+            if len(args) >= 2:
+                return args[1]
+            elif len(args) == 1:
+                return args[0]
+            else:
+                raise IndexError("empty args")
         except IndexError as exc:
-            raise ValueError("被装饰函数需要至少两个参数: (self_or_obj, index)") from exc
+            raise ValueError("被装饰函数需要至少一个参数作为索引") from exc
 
     def _single_worker_execute(
         self,
