@@ -183,31 +183,32 @@ if __name__ == "__main__":
         
         precomputed_dir = Path(ROOT) / "precomputed"
         precomputed_dir.mkdir(parents=True, exist_ok=True)
-        precomputed_path = precomputed_dir / "zipf_opt_precomputed.pkl"
 
-        if not precomputed_path.exists():
-            logger.info(f"预计算文件不存在，正在生成: {precomputed_path}")
-            generate_precomputed_file(
-                dataset_size=MAX_DATASET_SIZE,
-                total_iterations=total_iter,
-                persist_path=precomputed_path,
-                random_seed=0,
-                replacement=True,
-            )
-            logger.info("预计算文件生成完成")
-
-        # 添加OPT缓存配置
+        # 添加OPT缓存配置 - 为每个cache_size生成独立的预计算文件
         for size in cache_sizes:
             cache_size = int(size * MAX_DATASET_SIZE)
             if cache_size > 0:
+                precomputed_path = precomputed_dir / f"zipf_opt_precomputed_alpha_{alpha:.1f}_{cache_size}.pkl"
+
+                if not precomputed_path.exists():
+                    logger.info(f"生成预计算文件（alpha={alpha}, maxsize={cache_size}）: {precomputed_path}")
+                    generate_precomputed_file(
+                        dataset_size=MAX_DATASET_SIZE,
+                        total_iterations=total_iter,
+                        persist_path=precomputed_path,
+                        random_seed=0,
+                        replacement=True,
+                        maxsize=cache_size
+                    )
+                    logger.info("预计算文件生成完成")
+
                 caches.append((
                     "OPT",
                     size,
                     OPTCacheDecorator(
                         precomputed_path=precomputed_path,
                         maxsize=cache_size,
-                        total_iter=total_iter,
-                        seed=0,
+                        total_iter=total_iter
                     ),
                 ))
 

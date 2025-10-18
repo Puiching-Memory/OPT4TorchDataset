@@ -31,7 +31,7 @@ def create_random_rgb_dataset(output_dir="./data/random_rgb_dataset",
     
     for i in tqdm(range(num_images), desc="Generating images"):
         image = np.random.randint(0, 256, size=(image_size[0], image_size[1], 3), dtype=np.uint8)
-        image_pil = PIL.Image.fromarray(image, mode='RGB')
+        image_pil = PIL.Image.fromarray(image)
         
         class_id = i % num_classes
         image_filename = f"img_{i:05d}.jpg"
@@ -53,7 +53,8 @@ if __name__ == "__main__":
     )
     
     from torchvision.datasets import ImageFolder
+
+    logger.info(f"testing dataset at: {dataset_path}")
     dataset = ImageFolder(dataset_path)
-    print(f"Dataset created with {len(dataset)} images")
-    print(f"Classes: {dataset.classes}")
-    print(f"Sample: {dataset[0]}")
+    logger.info(f"Dataset created with {len(dataset)} images")
+    logger.info(f"Sample: {dataset[0]}")

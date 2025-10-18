@@ -29,33 +29,57 @@ pip install OPT4TorchDataset
 
 ## Quick Start
 
-### Method 1: API
+### Method 1: API (离线预计算)
 
 ```python
-from OPT4TorchDataSet.cachelib import generate_precomputed_file
+from OPT4TorchDataSet.cachelib import generate_precomputed_file, OPTCacheDecorator
+from torch.utils.data import DataLoader
 
+# Step 1: 离线生成预计算文件（一次性）
+# ⭐ 注意：必须指定 maxsize（缓存大小）
 generate_precomputed_file(
-    dataset_size=10000,        # 数据集大小
-    total_iterations=100000,   # 总迭代次数
-    persist_path="precomputed/my_experiment.pkl", # 预计算结果保存路径
-    random_seed=0,             # 随机种子
-    replacement=True           # 有放回采样
+    dataset_size=10000,
+    total_iterations=100000,
+    persist_path="precomputed/my_experiment.pkl",
+    random_seed=0,
+    replacement=True,
+    maxsize=3000  # ⭐ 关键：预计算所需的缓存大小
 )
+
+# Step 2: 运行时创建缓存装饰器（初始化极快 <100ms）
+decorator = OPTCacheDecorator(
+    precomputed_path="precomputed/my_experiment.pkl",
+    maxsize=3000,           # ⚠️ 必须与预计算时的 maxsize 一致
+    total_iter=100000
+)
+
+# Step 3: 应用到数据集
+dataset = MyDataset()
+dataset.__getitem__ = decorator(dataset.__getitem__)
+
+# 使用数据加载器
+dataloader = DataLoader(dataset, batch_size=32)
+for batch in dataloader:
+    # 直接使用，无需额外计算
+    pass
 ```
 
-### Method 2: CLI
+### Method 2: CLI (离线预计算)
 
 ```bash
-opt4torch-precompute \
+# 生成预计算文件（需要指定缓存大小）
+python -m src.OPT4TorchDataSet.cli \
+    --dataset-size 10000 \
     --total-iter 100000 \
     --output precomputed/my_experiment.pkl \
-    --seed 42
+    --seed 0
 ```
 
-- `--total-iter`: **必需**。预计算的总访问次数，通常等于你训练中的总采样次数
+- `--dataset-size`: **必需**。数据集大小
+- `--total-iter`: **必需**。预计算的总访问次数
 - `--output`: **必需**。保存预计算结果的文件路径（.pkl格式）
-- `--sampler`: 采样器类型，格式为`module:callable`（默认：`torch.utils.data:RandomSampler`）
 - `--seed`: 随机种子，确保结果可重现（可选）
+- `--no-replacement`: 禁用有放回采样（可选）
 
 
 ### 在PyTorch数据集中使用
@@ -167,13 +191,14 @@ python -m src.OPT4TorchDataSet.cli \
 ```bash
 # tested ubuntu 24.04 cuda 12.8 h800 sm90
 # tested windows11 cuda 12.9.1 NVIDIA 4060Ti sm89
+# tested windows11 cuda 13.0.2 NVIDIA 4060Ti sm89
 apt update
 apt upgrade
 apt install build-essential
 
-conda create -n opt4 python=3.13
+conda create -n opt4 python=3.14
 conda activate opt4
-pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu129
+pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu130
 pip install -r requirements.txt
 
 # install triton for windows(optional)

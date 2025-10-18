@@ -1,9 +1,10 @@
 timm
-huggingface-hub
 cachetools
-swanlab
 loguru
-datasets
-matplotlib
 tqdm
-cython
+
+# swanlab
+# huggingface-hub
+# datasets
+# matplotlib
+# cython

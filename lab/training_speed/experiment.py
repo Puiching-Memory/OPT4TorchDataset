@@ -18,7 +18,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, os.path.join(ROOT, 'src'))
 sys.path.insert(0, ROOT)
 
-from lib.mini_imagenet_dataset import MiniImageNetDataset
+# from lib.mini_imagenet_dataset import MiniImageNetDataset
 from lib.ramRGB_dataset import RandomRGBDataset
 from OPT4TorchDataSet.cachelib import OPTCacheDecorator, generate_precomputed_file
 
@@ -92,6 +92,7 @@ class CacheExperiment:
         dataset = self.config.dataset_class(**self.config.dataset_params)
         dataset_size = len(dataset)
         total_iterations = dataset_size * self.config.epochs
+        cache_size = int(dataset_size * self.config.cache_size_ratio)
         
         self.precomputed_path = self.output_dir / "opt_precomputed.pkl"
         
@@ -100,7 +101,8 @@ class CacheExperiment:
             total_iterations=total_iterations,
             persist_path=self.precomputed_path,
             random_seed=42,
-            replacement=True
+            replacement=True,
+            maxsize=cache_size
         )
         
         logger.info(f"Generated OPT precomputed file: {self.precomputed_path}")
@@ -136,8 +138,7 @@ class CacheExperiment:
             opt_cache = OPTCacheDecorator(
                 precomputed_path=self.precomputed_path,
                 maxsize=cache_size,
-                total_iter=total_iterations,
-                seed=42
+                total_iter=total_iterations
             )
             
             # Apply cache decorator to __getitem__ method
