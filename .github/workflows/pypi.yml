@@ -3,9 +3,15 @@ name: Build and upload to PyPI
 on:
   workflow_dispatch:
   pull_request:
+    paths-ignore:
+      - 'README.md'
+      - '*.md'
   push:
     branches:
       - main
+    paths-ignore:
+      - 'README.md'
+      - '*.md'
   release:
     types:
       - published

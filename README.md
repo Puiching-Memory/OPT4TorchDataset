@@ -3,22 +3,21 @@ Plug-and-Play Optimal Page Replacement Algorithm (OPT) for Torch Dataset
 
 ## What is OPT?
 
-**OPT (Optimal Page Replacement Algorithm)** 是理论上最优的页面替换算法，也被称为 Bélády's algorithm。
-它通过预知未来的访问模式来决定当前应该替换缓存中的哪个数据项，从而达到最小的缓存未命中率。
-
+**OPT (Optimal Page Replacement Algorithm)** 是**理论最优**的页面替换算法，也被称为 Bélády's algorithm。
+它需要**预知未来**的访问模式来决定当前应该替换缓存中的哪个数据项，从而达到**最大的**缓存命中率。
 
 - OPT需要知道未来的访问序列
-- 在理论上提供最佳的缓存命中率
+- 理论最佳的缓存命中率
 - 总是替换"在未来最晚被访问"的数据项
 
-在深度学习训练中，数据访问模式通常是可预测的（由采样器决定），这使得OPT算法能够发挥最大效用：
+在深度学习训练中，数据访问模式通常是**可预测的**（由采样器决定），这使得我们能够将OPT算法应用于深度学习训练中：
 - 提升数据加载速度
-- 提高缓存命中率，比LRU、LFU等传统算法更高效
+- 提高缓存命中率，比LRU、LFU等缓存算法更高效
 
 ## OPT的局限性
 
 **在多进程数据加载（`num_workers > 0`）中，OPT 和其他所有缓存方法的收益都显著降低。**  
-在多进程数据加载中，多个工作进程可以并行预加载数据，这本身就能掩盖数据传输延迟。
+多个工作进程可以并行预加载数据，这本身就能掩盖数据传输延迟。
 
 ## Install
 ```bash
@@ -28,7 +27,7 @@ pip install OPT4TorchDataset
 
 ## Quick Start
 
-### Method 1: API (离线预计算)
+### Method 1: API
 
 ```python
 from OPT4TorchDataSet.cachelib import generate_precomputed_file, OPTCacheDecorator
@@ -61,7 +60,7 @@ for batch in dataloader:
     pass
 ```
 
-### Method 2: CLI (离线预计算)
+### Method 2: CLI
 
 ```bash
 
@@ -77,12 +76,6 @@ python -m src.OPT4TorchDataSet.cli \
 - `--output`: **必需**。保存预计算结果的文件路径（.pkl格式）
 - `--seed`: 随机种子，确保结果可重现（可选）
 - `--no-replacement`: 禁用有放回采样（可选）
-
-
-**重要提醒**：
-- 训练时使用的采样器配置必须与预计算时完全一致
-- 包括相同的随机种子、相同的采样器类型和参数
-- 总访问次数也必须匹配，否则会抛出异常
 
 ## 开发者指南
 
@@ -100,49 +93,44 @@ python -m src.OPT4TorchDataSet.cli \
 
 ### 环境配置
 
-#### 系统要求
+#### 兼容性矩阵
 
-已测试的环境：
-- Ubuntu 24.04 + CUDA 12.8 + H800 (sm90)
-- Windows 11 + CUDA 12.9.1 + NVIDIA 4060Ti (sm89)
-- Windows 11 + CUDA 13.0.2 + NVIDIA 4060Ti (sm89)
+| 操作系统     | CUDA版本 | GPU型号       | SM架构 | 测试状态 |
+| ------------ | -------- | ------------- | ------ | -------- |
+| Ubuntu 24.04 | 12.8.2   | H800          | sm90   | ✅        |
+| Windows 11   | 12.9.1   | NVIDIA 4060Ti | sm89   | ✅        |
+| Windows 11   | 13.0.2   | NVIDIA 4060Ti | sm89   | ✅        |
 
 #### 安装步骤
 
-**1. 系统依赖（Linux）**
-```bash
-apt update && apt upgrade
-apt install build-essential
-```
-
-**2. 创建 Conda 环境**
+**创建 Conda 环境**
 ```bash
 conda create -n opt4 python=3.14
 conda activate opt4
 ```
 
-**3. 安装 PyTorch**
+**安装 PyTorch**
 ```bash
 pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu130
 ```
 
-**4. 安装项目依赖**
+**安装项目依赖**
 ```bash
 pip install -r requirements.txt
 ```
 
-**5. 可选：安装 Triton（Windows）**
+#### 可选配置
+
+**安装 Triton（Windows）**
 ```bash
 pip install -U "triton-windows<3.5"
 ```
 
-#### 可选配置
-
 **登录 SwanLab**（用于实验追踪）
 ```bash
 swanlab login
-# 然后参考 https://docs.swanlab.cn/guide_cloud/general/quick-start.html
 ```
+https://docs.swanlab.cn/guide_cloud/general/quick-start.html
 
 **选择 GPU 设备**
 ```bash
@@ -159,14 +147,8 @@ $env:HF_ENDPOINT = "https://hf-mirror.com"
 ### 构建 Python 包
 
 ```bash
-# 安装构建工具
 pip install build
-
-# 构建 wheel 包
 python -m build
-
-# 安装本地 wheel 包
-pip install dist/opt4torchdataset-1.0.0-cp313-cp313-linux_x86_64.whl --force-reinstall
 ```
 
 ## Experiment
