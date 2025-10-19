@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 
-import json
 import sys
 import time
 from pathlib import Path
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any
 import math
 import torch
 import timm
@@ -21,13 +20,23 @@ sys.path.insert(0, ROOT)
 # from lib.mini_imagenet_dataset import MiniImageNetDataset
 from lib.ramRGB_dataset import RandomRGBDataset
 from OPT4TorchDataSet.cachelib import OPTCacheDecorator, generate_precomputed_file
+from OPT4TorchDataSet.logger import ExperimentLogger
 
 from cachetools import cached, LRUCache, LFUCache, FIFOCache, RRCache
 
 class ExperimentConfig:
     output_dir: str = "results"
-    models: List[str] = ["resnet18",
-                         ]
+    models: List[str] = [
+        "resnet50",
+        "vit_base_patch16_224",
+        "swin_base_patch4_window7_224",
+        "mobilenetv3_small_100",
+        "vit_base_patch16_dinov3",
+        "convnextv2_base",
+        "swinv2_cr_base_224",
+        "davit_base",
+        "mobilenetv5_base"
+    ]
     
     batch_size: int = 16
     num_workers: int = 0  # 改为 0 以避免 Windows 多进程 pickle 问题
@@ -40,9 +49,15 @@ class ExperimentConfig:
     dataset_class = RandomRGBDataset
     dataset_params: Dict[str, Any] = {"data_dir": "../../data/random_rgb_dataset"}
 
-
     cache_types: List[str] = ["warmUp", "OPT", "none", "LRU", "LFU", "FIFO", "RR"]
+    # cache_types: List[str] = ["OPT"]
     cache_size_ratio: float = 0.3
+    
+    # Logging configuration
+    log_backends: List[str] = ["swanlab"]  # 支持的日志后端：swanlab, tensorboard
+    log_dir: str = "runs/experiment"  # TensorBoard 日志目录
+    swanlab_project: str = "opt4"
+    swanlab_workspace: str = "Sail2Dream"
 
 
 def save_results_to_csv(results: List[Dict], output_path: Path):
@@ -82,6 +97,22 @@ class CacheExperiment:
         self.config = config
         self.output_dir = Path(config.output_dir)
         self.output_dir.mkdir(exist_ok=True)
+        
+        # Initialize experiment logger
+        self.exp_logger = ExperimentLogger(backends=config.log_backends)
+        logger_config = {
+            "batch_size": config.batch_size,
+            "num_workers": config.num_workers,
+            "enable_amp": config.enable_amp,
+            "epochs": config.epochs,
+            "cache_size_ratio": config.cache_size_ratio,
+            "dataset_class": config.dataset_class.__name__,
+            "cache_types": config.cache_types,
+            "project": config.swanlab_project,
+            "workspace": config.swanlab_workspace,
+            "log_dir": config.log_dir,
+        }
+        self.exp_logger.init(logger_config)
         
         # Generate OPT cache precomputed file if needed
         if "OPT" in self.config.cache_types:
@@ -210,9 +241,20 @@ class CacheExperiment:
             next_epoch_boundary = step % batches_per_epoch == 0 or step == total_batches
             if next_epoch_boundary:
                 pbar.set_postfix(epoch=f"{current_epoch}/{self.config.epochs}", loss=float(loss.item()))
+                
+                # Log metrics to experiment logger (only numeric values for SwanLab compatibility)
+                self.exp_logger.log({
+                    "loss": float(loss.item()),
+                    "epoch": current_epoch,
+                })
         
         total_training_time = time.perf_counter() - start_time
         logger.info(f"Total time: {total_training_time:.4f}s")
+        
+        # Log final metrics to experiment logger (only numeric values for SwanLab compatibility)
+        self.exp_logger.log({
+            "training_time": total_training_time,
+        })
         
         # Collect results
         result = {
@@ -238,15 +280,19 @@ class CacheExperiment:
         models = self.config.models
         cache_types = self.config.cache_types
     
-        for model in models:
-            for cache_type in cache_types:
-                logger.info("="*50)
-                logger.info(f"Model: {model}, Cache: {cache_type}")
-                result = self._run_single_experiment(model, cache_type)
-                results.append(result)
+        try:
+            for model in models:
+                for cache_type in cache_types:
+                    logger.info("="*50)
+                    logger.info(f"Model: {model}, Cache: {cache_type}")
+                    result = self._run_single_experiment(model, cache_type)
+                    results.append(result)
 
-        save_results_to_csv(results, self.output_dir / "results.csv")
-        logger.info(f"Results saved to {self.output_dir / 'results.csv'}")
+            save_results_to_csv(results, self.output_dir / "results.csv")
+            logger.info(f"Results saved to {self.output_dir / 'results.csv'}")
+        finally:
+            # Finish experiment logger
+            self.exp_logger.finish()
 
 
 if __name__ == "__main__":
