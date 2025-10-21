@@ -51,7 +51,7 @@ class ExperimentConfig:
 
     cache_types: List[str] = ["warmUp", "OPT", "none", "LRU", "LFU", "FIFO", "RR"]
     # cache_types: List[str] = ["OPT"]
-    cache_size_ratio: float = 0.3
+    cache_size_ratios: List[float] = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
     
     # Logging configuration
     log_backends: List[str] = ["swanlab"]  # 支持的日志后端：swanlab, tensorboard
@@ -62,33 +62,43 @@ class ExperimentConfig:
 
 def save_results_to_csv(results: List[Dict], output_path: Path):
     """
-    Save experiment results to CSV file
+    Save experiment results to CSV file with cache_size_ratio dimension
     """
     models = sorted(list(set(result["model_name"] for result in results)))
     cache_types = sorted(list(set(result["cache_type"] for result in results)))
+    cache_ratios = sorted(list(set(result["cache_size_ratio"] for result in results)))
     
     with open(output_path, 'w', newline='') as f:
         writer = csv.writer(f)
         
-        header = ["Model"] + [f"{cache_type} Time(s)" for cache_type in cache_types]
-        writer.writerow(header)
+        # Write results for each cache ratio
+        for ratio in cache_ratios:
+            writer.writerow([f"Cache Ratio: {ratio}"])
+            
+            header = ["Model"] + [f"{cache_type} Time(s)" for cache_type in cache_types]
+            writer.writerow(header)
+            
+            for model in models:
+                # 时间行
+                time_row = [f"{model}"]
+                for cache_type in cache_types:
+                    training_time = next((r["training_time"] for r in results 
+                                        if r["model_name"] == model 
+                                        and r["cache_type"] == cache_type
+                                        and r["cache_size_ratio"] == ratio), None)
+                    time_row.append(f"{training_time:.4f}" if training_time is not None else "")
+                writer.writerow(time_row)
+            
+            writer.writerow([])
         
-        for model in models:
-            # 时间行
-            time_row = [f"{model} Time"]
-            for cache_type in cache_types:
-                training_time = next((r["training_time"] for r in results 
-                                    if r["model_name"] == model and r["cache_type"] == cache_type), None)
-                time_row.append(f"{training_time:.4f}" if training_time is not None else "")
-            writer.writerow(time_row)
-        
-        writer.writerow([])
-        
-        writer.writerow(["Batch Size"] + [""] * (len(cache_types) - 1) + [results[0]["batch_size"]])
-        writer.writerow(["Num Workers"] + [""] * (len(cache_types) - 1) + [results[0]["num_workers"]])
-        writer.writerow(["AMP Enabled"] + [""] * (len(cache_types) - 1) + [results[0]["enable_amp"]])
-        writer.writerow(["Epochs"] + [""] * (len(cache_types) - 1) + [results[0]["epochs"]])
-        writer.writerow(["Cache Size Ratio"] + [""] * (len(cache_types) - 1) + [results[0]["cache_size_ratio"]])
+        # Write configuration summary
+        writer.writerow(["Configuration Summary"])
+        if results:
+            writer.writerow(["Batch Size"] + [""] * (len(cache_types) - 1) + [results[0]["batch_size"]])
+            writer.writerow(["Num Workers"] + [""] * (len(cache_types) - 1) + [results[0]["num_workers"]])
+            writer.writerow(["AMP Enabled"] + [""] * (len(cache_types) - 1) + [results[0]["enable_amp"]])
+            writer.writerow(["Epochs"] + [""] * (len(cache_types) - 1) + [results[0]["epochs"]])
+            writer.writerow(["Cache Ratios"] + [""] * (len(cache_types) - 1) + [", ".join(map(str, cache_ratios))])
 
 
 class CacheExperiment:
@@ -105,7 +115,7 @@ class CacheExperiment:
             "num_workers": config.num_workers,
             "enable_amp": config.enable_amp,
             "epochs": config.epochs,
-            "cache_size_ratio": config.cache_size_ratio,
+            "cache_size_ratios": config.cache_size_ratios,
             "dataset_class": config.dataset_class.__name__,
             "cache_types": config.cache_types,
             "project": config.swanlab_project,
@@ -113,22 +123,18 @@ class CacheExperiment:
             "log_dir": config.log_dir,
         }
         self.exp_logger.init(logger_config)
-        
-        # Generate OPT cache precomputed file if needed
-        if "OPT" in self.config.cache_types:
-            self._prepare_opt_cache()
 
-    def _prepare_opt_cache(self):
+    def _prepare_opt_cache(self, cache_size_ratio: float):
         """Prepare OPT cache precomputed file"""
         dataset = self.config.dataset_class(**self.config.dataset_params)
         dataset_size = len(dataset)
         total_iterations = dataset_size * self.config.epochs
-        cache_size = int(dataset_size * self.config.cache_size_ratio)
+        cache_size = int(dataset_size * cache_size_ratio)
         
         # 使用统一的预计算目录
         precomputed_dir = Path(__file__).parent.parent.parent / "precomputed"
         precomputed_dir.mkdir(parents=True, exist_ok=True)
-        self.precomputed_path = precomputed_dir / "opt_precomputed_training_speed.pkl"
+        self.precomputed_path = precomputed_dir / f"opt_precomputed_training_speed_{cache_size_ratio}.pkl"
         
         # 如果文件不存在则生成
         if not self.precomputed_path.exists():
@@ -142,12 +148,13 @@ class CacheExperiment:
             )
         
         logger.info(f"Using OPT precomputed file: {self.precomputed_path}")
+        return self.precomputed_path
 
-    def _setup_dataset(self, cache_type: str):
+    def _setup_dataset(self, cache_type: str, cache_size_ratio: float):
         """Setup dataset with specified cache type"""
         dataset = self.config.dataset_class(**self.config.dataset_params)
         dataset_size = len(dataset)
-        cache_size = int(dataset_size * self.config.cache_size_ratio)
+        cache_size = int(dataset_size * cache_size_ratio)
         
         if cache_type == "none":
             # No cache - do nothing
@@ -177,10 +184,10 @@ class CacheExperiment:
             
         return dataset
 
-    def _run_single_experiment(self, model_name: str, cache_type: str) -> dict:
+    def _run_single_experiment(self, model_name: str, cache_type: str, cache_size_ratio: float) -> dict:
         """Run single experiment focused on speed and time cost"""
         
-        dataset = self._setup_dataset(cache_type)
+        dataset = self._setup_dataset(cache_type, cache_size_ratio)
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = timm.create_model(model_name, pretrained=False, num_classes=100)
@@ -220,7 +227,7 @@ class CacheExperiment:
         pbar = tqdm(
             dataloader,
             total=total_batches,
-            desc=f"Training {model_name} with {cache_type} cache",
+            desc=f"Training {model_name} with {cache_type} cache (ratio: {cache_size_ratio})",
         )
         
         for step, batch_data in enumerate(pbar, start=1):
@@ -260,12 +267,12 @@ class CacheExperiment:
         result = {
             "model_name": model_name,
             "cache_type": cache_type,
+            "cache_size_ratio": cache_size_ratio,
             "training_time": total_training_time,
             "batch_size": self.config.batch_size,
             "num_workers": self.config.num_workers,
             "enable_amp": self.config.enable_amp,
             "dataset_class": self.config.dataset_class.__name__,
-            "cache_size_ratio": self.config.cache_size_ratio,
             "epochs": self.config.epochs,
         }
         
@@ -279,14 +286,20 @@ class CacheExperiment:
         
         models = self.config.models
         cache_types = self.config.cache_types
+        cache_size_ratios = self.config.cache_size_ratios
     
         try:
-            for model in models:
-                for cache_type in cache_types:
-                    logger.info("="*50)
-                    logger.info(f"Model: {model}, Cache: {cache_type}")
-                    result = self._run_single_experiment(model, cache_type)
-                    results.append(result)
+            for cache_size_ratio in cache_size_ratios:
+                # Prepare OPT cache for current ratio
+                if "OPT" in cache_types:
+                    self.precomputed_path = self._prepare_opt_cache(cache_size_ratio)
+                
+                for model in models:
+                    for cache_type in cache_types:
+                        logger.info("="*50)
+                        logger.info(f"Model: {model}, Cache: {cache_type}, Ratio: {cache_size_ratio}")
+                        result = self._run_single_experiment(model, cache_type, cache_size_ratio)
+                        results.append(result)
 
             save_results_to_csv(results, self.output_dir / "results.csv")
             logger.info(f"Results saved to {self.output_dir / 'results.csv'}")

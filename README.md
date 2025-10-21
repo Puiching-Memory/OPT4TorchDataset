@@ -1,6 +1,10 @@
 # OPT4TorchDataset
 Plug-and-Play Optimal Page Replacement Algorithm (OPT) for Torch Dataset
 
+![Experiment Overview A](media/Experiment_Overview_A.svg)
+![Experiment Overview B](media/Experiment_Overview_B.svg)
+
+
 ## What is OPT?
 
 **OPT (Optimal Page Replacement Algorithm)** 是**理论最优**的页面替换算法，也被称为 Bélády's algorithm。
@@ -24,6 +28,7 @@ Plug-and-Play Optimal Page Replacement Algorithm (OPT) for Torch Dataset
 pip install OPT4TorchDataset
 ```
 > 目前，我们尚未将wheel包推送至pypi，所以该方法无法使用。
+> 你可以先前往我们的Github Actions页面，获取自动构建的whl包手动安装。
 
 ## Quick Start
 
@@ -154,3 +159,19 @@ python -m build
 ## Experiment
 
 https://swanlab.cn/@Sail2Dream/opt4/overview
+
+| Model                        | FIFO Time(s) | LFU Time(s) | LRU Time(s) | OPT Time(s) | RR Time(s) | none Time(s) | warmUp Time(s) |
+| ---------------------------- | ------------ | ----------- | ----------- | ----------- | ---------- | ------------ | -------------- |
+| convnextv2_base              | 179.1515     | 167.4298    | 149.3036    | 136.9226    | 163.4252   | 195.6518     | 159.9803       |
+| davit_base                   | 118.902      | 118.8557    | 711.6681    | 82.9771     | 132.2939   | 120.6464     | 137.6575       |
+| mobilenetv3_small_100        | 97.6476      | 95.3437     | 82.9322     | 47.3384     | 69.0704    | 103.9736     | 112.7548       |
+| mobilenetv5_base             | 168.7884     | 166.6462    | 171.9088    | 150.2256    | 172.5975   | 189.045      | 230.02         |
+| resnet50                     | 65.3436      | 71.7038     | 69.5199     | 42.7169     | 69.1713    | 84.1985      | 73.032         |
+| swin_base_patch4_window7_224 | 126.8982     | 137.4744    | 155.4214    | 85.9536     | 114.0388   | 125.5925     | 140.2842       |
+| swinv2_cr_base_224           | 126.8298     | 156.9438    | 181.8895    | 104.4104    | 182.2423   | 191.7603     | 158.8843       |
+| vit_base_patch16_224         | 115.6438     | 98.5015     | 105.8998    | 67.547      | 116.7467   | 127.2664     | 108.5507       |
+| vit_base_patch16_dinov3      | 94.6338      | 97.7933     | 124.6119    | 96.1758     | 91.3743    | 160.4503     | 135.4348       |
+
+```bash
+Batch Size: 16 | Num Workers: 0 | AMP Enabled: TRUE | Epochs: 5 | Cache Size Ratio: 0.3
+```
