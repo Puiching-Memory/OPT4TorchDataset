@@ -18,6 +18,8 @@ Plug-and-Play Optimal Page Replacement Algorithm (OPT) for Torch Dataset
 - 提升数据加载速度
 - 提高缓存命中率，比LRU、LFU等缓存算法更高效
 
+![flow.png](media/伪随机数缓存的一种方法.drawio.svg)
+
 ## OPT的局限性
 
 **在多进程数据加载（`num_workers > 0`）中，OPT 和其他所有缓存方法的收益都显著降低。**  
@@ -100,35 +102,21 @@ python -m src.OPT4TorchDataSet.cli \
 
 #### 兼容性矩阵
 
-| 操作系统     | CUDA版本 | GPU型号       | SM架构 | 测试状态 |
-| ------------ | -------- | ------------- | ------ | -------- |
-| Ubuntu 24.04 | 12.8.2   | H800          | sm90   | ✅        |
-| Windows 11   | 12.9.1   | NVIDIA 4060Ti | sm89   | ✅        |
-| Windows 11   | 13.0.2   | NVIDIA 4060Ti | sm89   | ✅        |
+| 操作系统     | CUDA版本 | GPU型号       | SM架构 |
+| ------------ | -------- | ------------- | ------ |
+| Ubuntu 24.04 | 12.8.2   | H800          | sm90   |
+| Windows 11   | 12.9.1   | NVIDIA 4060Ti | sm89   |
+| Windows 11   | 13.0.2   | NVIDIA 4060Ti | sm89   |
 
 #### 安装步骤
 
 **创建 Conda 环境**
 ```bash
-conda create -n opt4 python=3.14
-conda activate opt4
-```
-
-**安装 PyTorch**
-```bash
-pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu130
-```
-
-**安装项目依赖**
-```bash
-pip install -r requirements.txt
-```
-
-#### 可选配置
-
-**安装 Triton（Windows）**
-```bash
-pip install -U "triton-windows<3.5"
+uv venv --python 3.14
+.venv\Scripts\activate.ps1
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+uv pip install -r requirements.txt
+uv pip install -U "triton-windows" # Optional for Windows
 ```
 
 **登录 SwanLab**（用于实验追踪）
@@ -145,15 +133,14 @@ export CUDA_VISIBLE_DEVICES=2
 **设置 Hugging Face 镜像**（提升下载速度）
 ```bash
 export HF_ENDPOINT=https://hf-mirror.com
-# 或在 Windows 上
-$env:HF_ENDPOINT = "https://hf-mirror.com"
+$env:HF_ENDPOINT = "https://hf-mirror.com" # 或在 Windows 上
 ```
 
-### 构建 Python 包
+### 构建 Python wheel 包
 
 ```bash
-pip install build
-python -m build
+uv pip install build
+uv python -m build
 ```
 
 ## Experiment

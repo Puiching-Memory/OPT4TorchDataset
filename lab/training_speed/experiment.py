@@ -20,7 +20,6 @@ sys.path.insert(0, ROOT)
 # from lib.mini_imagenet_dataset import MiniImageNetDataset
 from lib.ramRGB_dataset import RandomRGBDataset
 from OPT4TorchDataSet.cachelib import OPTCacheDecorator, generate_precomputed_file
-from OPT4TorchDataSet.logger import ExperimentLogger
 
 from cachetools import cached, LRUCache, LFUCache, FIFOCache, RRCache
 
@@ -108,21 +107,6 @@ class CacheExperiment:
         self.output_dir = Path(config.output_dir)
         self.output_dir.mkdir(exist_ok=True)
         
-        # Initialize experiment logger
-        self.exp_logger = ExperimentLogger(backends=config.log_backends)
-        logger_config = {
-            "batch_size": config.batch_size,
-            "num_workers": config.num_workers,
-            "enable_amp": config.enable_amp,
-            "epochs": config.epochs,
-            "cache_size_ratios": config.cache_size_ratios,
-            "dataset_class": config.dataset_class.__name__,
-            "cache_types": config.cache_types,
-            "project": config.swanlab_project,
-            "workspace": config.swanlab_workspace,
-            "log_dir": config.log_dir,
-        }
-        self.exp_logger.init(logger_config)
 
     def _prepare_opt_cache(self, cache_size_ratio: float):
         """Prepare OPT cache precomputed file"""
@@ -249,19 +233,10 @@ class CacheExperiment:
             if next_epoch_boundary:
                 pbar.set_postfix(epoch=f"{current_epoch}/{self.config.epochs}", loss=float(loss.item()))
                 
-                # Log metrics to experiment logger (only numeric values for SwanLab compatibility)
-                self.exp_logger.log({
-                    "loss": float(loss.item()),
-                    "epoch": current_epoch,
-                })
         
         total_training_time = time.perf_counter() - start_time
         logger.info(f"Total time: {total_training_time:.4f}s")
         
-        # Log final metrics to experiment logger (only numeric values for SwanLab compatibility)
-        self.exp_logger.log({
-            "training_time": total_training_time,
-        })
         
         # Collect results
         result = {
@@ -305,7 +280,8 @@ class CacheExperiment:
             logger.info(f"Results saved to {self.output_dir / 'results.csv'}")
         finally:
             # Finish experiment logger
-            self.exp_logger.finish()
+            # self.exp_logger.finish()
+            pass
 
 
 if __name__ == "__main__":
