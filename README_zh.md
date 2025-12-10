@@ -9,30 +9,30 @@ Plug-and-Play Optimal Page Replacement Algorithm (OPT) for Torch Dataset
 
 ## What is OPT?
 
-**OPT (Optimal Page Replacement Algorithm)** is the **theoretically optimal** page replacement algorithm, also known as Bélády's algorithm.
-It requires **knowing the future** access pattern to decide which data item in the cache should be replaced, thereby achieving the **maximum** cache hit rate.
+**OPT (Optimal Page Replacement Algorithm)** 是**理论最优**的页面替换算法，也被称为 Bélády's algorithm。
+它需要**预知未来**的访问模式来决定当前应该替换缓存中的哪个数据项，从而达到**最大的**缓存命中率。
 
-- OPT needs to know the future access sequence
-- Theoretically best cache hit rate
-- Always replaces the data item that will be accessed "furthest in the future"
+- OPT需要知道未来的访问序列
+- 理论最佳的缓存命中率
+- 总是替换"在未来最晚被访问"的数据项
 
-In deep learning training, data access patterns are usually **predictable** (determined by the sampler), which allows us to apply the OPT algorithm to deep learning training:
-- Improve data loading speed
-- Increase cache hit rate, more efficient than cache algorithms like LRU, LFU, etc.
+在深度学习训练中，数据访问模式通常是**可预测的**（由采样器决定），这使得我们能够将OPT算法应用于深度学习训练中：
+- 提升数据加载速度
+- 提高缓存命中率，比LRU、LFU等缓存算法更高效
 
 ![flow.png](media/伪随机数缓存的一种方法.drawio.svg)
 
-## Limitations of OPT
+## OPT的局限性
 
-**In multi-process data loading (`num_workers > 0`), the benefits of OPT and all other caching methods are significantly reduced.**
-Multiple worker processes can prefetch data in parallel, which itself can mask data transmission latency.
+**在多进程数据加载（`num_workers > 0`）中，OPT 和其他所有缓存方法的收益都显著降低。**  
+多个工作进程可以并行预加载数据，这本身就能掩盖数据传输延迟。
 
 ## Install
 ```bash
 pip install OPT4TorchDataset
 ```
-> Currently, we have not pushed the wheel package to pypi, so this method cannot be used.
-> You can go to our Github Actions page to get the automatically built whl package for manual installation.
+> 目前，我们尚未将wheel包推送至pypi，所以该方法无法使用。
+> 你可以先前往我们的Github Actions页面，获取自动构建的whl包手动安装。
 
 ## Quick Start
 
@@ -42,7 +42,7 @@ pip install OPT4TorchDataset
 from OPT4TorchDataSet.cachelib import generate_precomputed_file, OPTCacheDecorator
 from torch.utils.data import DataLoader
 
-# Step 1: Offline generation of precomputed file (one-time)
+# Step 1: 离线生成预计算文件（一次性）
 generate_precomputed_file(
     dataset_size=10000,
     total_iterations=100000,
@@ -52,18 +52,18 @@ generate_precomputed_file(
     maxsize=3000
 )
 
-# Step 2: Create cache decorator at runtime
+# Step 2: 运行时创建缓存装饰器
 decorator = OPTCacheDecorator(
     precomputed_path="precomputed/my_experiment.pkl",
-    maxsize=3000, # Must be consistent with maxsize during precomputation
+    maxsize=3000, # 必须与预计算时的maxsize一致
     total_iter=100000
 )
 
-# Step 3: Apply to dataset
+# Step 3: 应用到数据集
 dataset = MyDataset()
 dataset.__getitem__ = decorator(dataset.__getitem__)
 
-# Use DataLoader
+# 使用数据加载器
 dataloader = DataLoader(dataset, batch_size=32)
 for batch in dataloader:
     pass
@@ -80,39 +80,39 @@ python -m src.OPT4TorchDataSet.cli \
     --seed 0
 ```
 
-- `--dataset-size`: **Required**. Dataset size
-- `--total-iter`: **Required**. Total number of accesses for precomputation
-- `--output`: **Required**. File path to save precomputed results (.pkl format)
-- `--seed`: Random seed to ensure reproducible results (optional)
-- `--no-replacement`: Disable replacement sampling (optional)
+- `--dataset-size`: **必需**。数据集大小
+- `--total-iter`: **必需**。预计算的总访问次数
+- `--output`: **必需**。保存预计算结果的文件路径（.pkl格式）
+- `--seed`: 随机种子，确保结果可重现（可选）
+- `--no-replacement`: 禁用有放回采样（可选）
 
-## Developer Guide
+## 开发者指南
 
-### Local Development Usage
+### 本地开发使用
 
-If you have not installed the package but are using the source code directly, you can start the CLI in the following way:
+如果你没有安装包，而是直接使用源码，可以通过以下方式启动CLI：
 
 ```bash
-# In the project root directory
+# 在项目根目录下
 python -m src.OPT4TorchDataSet.cli \
     --total-iter 100000 \
     --output ./precomputed/imagenet_opt.pkl \
     --seed 42
 ```
 
-### Environment Configuration
+### 环境配置
 
-#### Compatibility Matrix
+#### 兼容性矩阵
 
-| OS           | CUDA Version | GPU Model     | SM Architecture |
-| ------------ | ------------ | ------------- | --------------- |
-| Ubuntu 24.04 | 12.8.2       | H800          | sm90            |
-| Windows 11   | 12.9.1       | NVIDIA 4060Ti | sm89            |
-| Windows 11   | 13.0.2       | NVIDIA 4060Ti | sm89            |
+| 操作系统     | CUDA版本 | GPU型号       | SM架构 |
+| ------------ | -------- | ------------- | ------ |
+| Ubuntu 24.04 | 12.8.2   | H800          | sm90   |
+| Windows 11   | 12.9.1   | NVIDIA 4060Ti | sm89   |
+| Windows 11   | 13.0.2   | NVIDIA 4060Ti | sm89   |
 
-#### Installation Steps
+#### 安装步骤
 
-**Create Conda Environment**
+**创建 Conda 环境**
 ```bash
 uv venv --python 3.14
 .venv\Scripts\activate.ps1
@@ -121,24 +121,24 @@ uv pip install -r requirements.txt
 uv pip install -U "triton-windows" # Optional for Windows
 ```
 
-**Login to SwanLab** (for experiment tracking)
+**登录 SwanLab**（用于实验追踪）
 ```bash
 swanlab login
 ```
 https://docs.swanlab.cn/guide_cloud/general/quick-start.html
 
-**Select GPU Device**
+**选择 GPU 设备**
 ```bash
 export CUDA_VISIBLE_DEVICES=2
 ```
 
-**Set Hugging Face Mirror** (improve download speed)
+**设置 Hugging Face 镜像**（提升下载速度）
 ```bash
 export HF_ENDPOINT=https://hf-mirror.com
-$env:HF_ENDPOINT = "https://hf-mirror.com" # Or on Windows
+$env:HF_ENDPOINT = "https://hf-mirror.com" # 或在 Windows 上
 ```
 
-### Build Python wheel package
+### 构建 Python wheel 包
 
 ```bash
 uv pip install build
