@@ -46,7 +46,7 @@ from torch.utils.data import DataLoader
 generate_precomputed_file(
     dataset_size=10000,
     total_iterations=100000,
-    persist_path="precomputed/my_experiment.pkl",
+    persist_path="precomputed/my_experiment.safetensors",
     random_seed=0,
     replacement=True,
     maxsize=3000
@@ -54,7 +54,7 @@ generate_precomputed_file(
 
 # Step 2: 运行时创建缓存装饰器
 decorator = OPTCacheDecorator(
-    precomputed_path="precomputed/my_experiment.pkl",
+    precomputed_path="precomputed/my_experiment.safetensors",
     maxsize=3000, # 必须与预计算时的maxsize一致
     total_iter=100000
 )
@@ -76,13 +76,13 @@ for batch in dataloader:
 python -m src.OPT4TorchDataSet.cli \
     --dataset-size 10000 \
     --total-iter 100000 \
-    --output precomputed/my_experiment.pkl \
+    --output precomputed/my_experiment.safetensors \
     --seed 0
 ```
 
 - `--dataset-size`: **必需**。数据集大小
 - `--total-iter`: **必需**。预计算的总访问次数
-- `--output`: **必需**。保存预计算结果的文件路径（.pkl格式）
+- `--output`: **必需**。保存预计算结果的文件路径（.safetensors格式）
 - `--seed`: 随机种子，确保结果可重现（可选）
 - `--no-replacement`: 禁用有放回采样（可选）
 
@@ -96,7 +96,7 @@ python -m src.OPT4TorchDataSet.cli \
 # 在项目根目录下
 python -m src.OPT4TorchDataSet.cli \
     --total-iter 100000 \
-    --output ./precomputed/imagenet_opt.pkl \
+    --output ./precomputed/imagenet_opt.safetensors \
     --seed 42
 ```
 
@@ -118,24 +118,17 @@ uv venv --python 3.14
 .venv\Scripts\activate.ps1
 uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 uv pip install -r requirements.txt
-uv pip install -U "triton-windows" # Optional for Windows
+uv pip install -U "triton-windows" # Windows 系统可选
 ```
-
-**登录 SwanLab**（用于实验追踪）
-```bash
-swanlab login
-```
-https://docs.swanlab.cn/guide_cloud/general/quick-start.html
 
 **选择 GPU 设备**
 ```bash
-export CUDA_VISIBLE_DEVICES=2
+export CUDA_VISIBLE_DEVICES=0
 ```
 
 **设置 Hugging Face 镜像**（提升下载速度）
 ```bash
-export HF_ENDPOINT=https://hf-mirror.com
-$env:HF_ENDPOINT = "https://hf-mirror.com" # 或在 Windows 上
+$env:HF_ENDPOINT = "https://hf-mirror.com" # 在 Windows 上
 ```
 
 ### 构建 Python wheel 包
@@ -145,9 +138,8 @@ uv pip install build
 uv python -m build
 ```
 
-## Experiment
-
-https://swanlab.cn/@Sail2Dream/opt4/overview
+## 实验结果
+所有实验结果均以 JSON 文件形式保存在各个实验目录下的 `results/` 子目录中。
 
 | Model                        | FIFO Time(s) | LFU Time(s) | LRU Time(s) | OPT Time(s) | RR Time(s) | none Time(s) | warmUp Time(s) |
 | ---------------------------- | ------------ | ----------- | ----------- | ----------- | ---------- | ------------ | -------------- |

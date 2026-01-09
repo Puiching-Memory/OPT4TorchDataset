@@ -46,7 +46,7 @@ from torch.utils.data import DataLoader
 generate_precomputed_file(
     dataset_size=10000,
     total_iterations=100000,
-    persist_path="precomputed/my_experiment.pkl",
+    persist_path="precomputed/my_experiment.safetensors",
     random_seed=0,
     replacement=True,
     maxsize=3000
@@ -54,7 +54,7 @@ generate_precomputed_file(
 
 # Step 2: Create cache decorator at runtime
 decorator = OPTCacheDecorator(
-    precomputed_path="precomputed/my_experiment.pkl",
+    precomputed_path="precomputed/my_experiment.safetensors",
     maxsize=3000, # Must be consistent with maxsize during precomputation
     total_iter=100000
 )
@@ -76,13 +76,13 @@ for batch in dataloader:
 python -m src.OPT4TorchDataSet.cli \
     --dataset-size 10000 \
     --total-iter 100000 \
-    --output precomputed/my_experiment.pkl \
+    --output precomputed/my_experiment.safetensors \
     --seed 0
 ```
 
 - `--dataset-size`: **Required**. Dataset size
 - `--total-iter`: **Required**. Total number of accesses for precomputation
-- `--output`: **Required**. File path to save precomputed results (.pkl format)
+- `--output`: **Required**. File path to save precomputed results (.safetensors format)
 - `--seed`: Random seed to ensure reproducible results (optional)
 - `--no-replacement`: Disable replacement sampling (optional)
 
@@ -96,7 +96,7 @@ If you have not installed the package but are using the source code directly, yo
 # In the project root directory
 python -m src.OPT4TorchDataSet.cli \
     --total-iter 100000 \
-    --output ./precomputed/imagenet_opt.pkl \
+    --output ./precomputed/imagenet_opt.safetensors \
     --seed 42
 ```
 
@@ -121,21 +121,14 @@ uv pip install -r requirements.txt
 uv pip install -U "triton-windows" # Optional for Windows
 ```
 
-**Login to SwanLab** (for experiment tracking)
-```bash
-swanlab login
-```
-https://docs.swanlab.cn/guide_cloud/general/quick-start.html
-
 **Select GPU Device**
 ```bash
-export CUDA_VISIBLE_DEVICES=2
+export CUDA_VISIBLE_DEVICES=0
 ```
 
 **Set Hugging Face Mirror** (improve download speed)
 ```bash
-export HF_ENDPOINT=https://hf-mirror.com
-$env:HF_ENDPOINT = "https://hf-mirror.com" # Or on Windows
+$env:HF_ENDPOINT = "https://hf-mirror.com" # on Windows
 ```
 
 ### Build Python wheel package
@@ -146,8 +139,7 @@ uv python -m build
 ```
 
 ## Experiment
-
-https://swanlab.cn/@Sail2Dream/opt4/overview
+All experiment results are saved as JSON files in the `results/` subdirectory of each experiment.
 
 | Model                        | FIFO Time(s) | LFU Time(s) | LRU Time(s) | OPT Time(s) | RR Time(s) | none Time(s) | warmUp Time(s) |
 | ---------------------------- | ------------ | ----------- | ----------- | ----------- | ---------- | ------------ | -------------- |

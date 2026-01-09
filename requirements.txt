@@ -1,10 +1,9 @@
 timm
 cachetools
 loguru
-tqdm
-
-# swanlab
-# huggingface-hub
-# datasets
-# matplotlib
-# cython
+typer
+rich
+safetensors
+packaging
+psutil
+torch

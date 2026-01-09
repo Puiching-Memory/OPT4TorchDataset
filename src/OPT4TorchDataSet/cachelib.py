@@ -1,17 +1,18 @@
-import heapq
-import pickle
-from collections import defaultdict
 from functools import wraps
-from itertools import count
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import torch
 from torch.utils.data import RandomSampler
+import safetensors.torch
 
 __all__ = [
     "generate_precomputed_file",
     "OPTCacheDecorator",
+    "SharedOPTCacheDecorator",
+    "CachetoolsDecorator",
 ]
+
+from .atomic_extension import OPTCore, build_opt_plan
 
 
 def generate_precomputed_file(
@@ -21,194 +22,240 @@ def generate_precomputed_file(
     random_seed: int = 0,
     replacement: bool = True,
     maxsize: int = 1,
+    distribution_seq: Optional[torch.Tensor] = None,
 ) -> None:
-    """
-    生成OPT缓存完整的离线预计算文件。
-    
-    Args:
-        dataset_size (int): 数据集大小（索引范围：0 到 dataset_size-1）
-        total_iterations (int): 总迭代次数
-        persist_path (Union[str, Path]): 保存路径
-        random_seed (int, optional): 随机种子。默认为0
-        replacement (bool, optional): 是否有放回采样。默认为True
-        maxsize (int, optional): 缓存容量。默认为1。用于预计算淘汰计划。
-    
-    Raises:
-        ValueError: 当参数无效时
-        OSError: 当文件无法创建或写入时
-    
-    Example:
-        >>> generate_precomputed_file(
-        ...     dataset_size=10000,
-        ...     total_iterations=100000,
-        ...     persist_path="precomputed/my_experiment.pkl",
-        ...     maxsize=3000
-        ... )
-    """
+    # ... (validation logic same) ...
     if dataset_size <= 0:
         raise ValueError(f"dataset_size 必须为正整数，得到: {dataset_size}")
-    
+
     if total_iterations <= 0:
         raise ValueError(f"total_iterations 必须为正整数，得到: {total_iterations}")
-    
+
     if not replacement and total_iterations > dataset_size:
         raise ValueError(
             f"无放回采样时，total_iterations ({total_iterations}) "
             f"不能超过 dataset_size ({dataset_size})"
         )
-    
+
     if maxsize < 0:
         raise ValueError(f"maxsize 必须为非负整数，得到: {maxsize}")
-    
-    # 创建生成器并设置种子
-    generator = torch.Generator()
-    generator.manual_seed(random_seed)
-    
-    # 创建采样器
-    sampler = RandomSampler(
-        list(range(dataset_size)),
-        replacement=replacement,
-        num_samples=total_iterations,
-        generator=generator
-    )
-    
+
     # 生成访问序列
-    future_index = list(sampler)
-    
-    # 构建未来映射 - 记录每个键的所有访问位置
-    future_map: Dict[Any, List[int]] = defaultdict(list)
-    for pos, key in enumerate(future_index):
-        future_map[key].append(pos)
-    
-    # 计算下次出现位置 - 预计算每个位置的下次访问时刻
-    next_occurrence: List[Optional[int]] = [None] * total_iterations
-    last_seen: Dict[Any, int] = {}
-    for position in range(total_iterations - 1, -1, -1):
-        key = future_index[position]
-        next_occurrence[position] = last_seen.get(key)
-        last_seen[key] = position
-    
-    # 离线预计算淘汰计划、缓存决策和释放计划
-    eviction_plan, cache_decision, release_on_exit = _build_eviction_plan_offline(
-        dataset_size=dataset_size,
-        maxsize=maxsize,
-        total_iterations=total_iterations,
-        future_index=future_index,
-        next_occurrence=next_occurrence,
-    )
-    
+    if distribution_seq is not None:
+        if len(distribution_seq) < total_iterations:
+            raise ValueError(f"提供序列长度({len(distribution_seq)})小于 total_iterations({total_iterations})")
+        future_index = distribution_seq[:total_iterations].to(torch.int64)
+    else:
+        # 创建生成器并设置种子
+        generator = torch.Generator()
+        generator.manual_seed(random_seed)
+
+        # 创建采样器 (默认均匀分布)
+        sampler = RandomSampler(
+            list(range(dataset_size)),
+            replacement=replacement,
+            num_samples=total_iterations,
+            generator=generator,
+        )
+        future_index = torch.tensor(list(sampler), dtype=torch.int64)
+
+    # 使用 C++ 预计算决策表
+    decision_table = build_opt_plan(future_index, maxsize)
+
     # 保存文件
     target = Path(persist_path)
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("wb") as handle:
-            pickle.dump(
-                {
-                    "future_index": future_index,
-                    "future_map": dict(future_map),
-                    "next_occurrence": next_occurrence,
-                    "eviction_plan": eviction_plan,
-                    "cache_decision": cache_decision,
-                    "release_on_exit": release_on_exit,
-                    "maxsize": maxsize,
-                    "total_iterations": total_iterations,
-                    "seed": random_seed,
-                },
-                handle,
-                protocol=pickle.HIGHEST_PROTOCOL,
-            )
+        # Store scalars as a 1D tensor: [maxsize, dataset_size, total_iterations, seed]
+        config_tensor = torch.tensor(
+            [maxsize, dataset_size, total_iterations, random_seed], dtype=torch.int64
+        )
+
+        tensors = {
+            "future_index": future_index,
+            "decision_table": decision_table,
+            "config": config_tensor,
+        }
+        safetensors.torch.save_file(tensors, str(target))
+
     except OSError as e:
         raise OSError(f"无法创建或写入文件 {persist_path}: {e}")
 
 
-def _build_eviction_plan_offline(
+def prepare_shared_tensors(
+    precomputed_path: Union[str, Path],
     dataset_size: int,
     maxsize: int,
-    total_iterations: int,
-    future_index: List[Any],
-    next_occurrence: List[Optional[int]],
-) -> Tuple[List[Optional[Tuple[Any, bool]]], List[bool], List[Optional[Any]]]:
-    """
-    离线预计算淘汰计划、缓存决策以及释放计划。
-    
-    Args:
-        dataset_size: 数据集大小
-        maxsize: 缓存容量
-        total_iterations: 总迭代次数
-        future_index: 未来访问序列
-        next_occurrence: 每个位置的下次出现位置
-        
-    Returns:
-        Tuple of (eviction_plan, cache_decision, release_on_exit)
-    """
-    plan: List[Optional[Tuple[Any, bool]]] = [None] * total_iterations
-    cache_decision: List[bool] = [False] * total_iterations
-    release_on_exit: List[Optional[Any]] = [None] * total_iterations
+):
+    """把预计算的列表数据转换为共享内存 Tensor。"""
+    payload = safetensors.torch.load_file(str(precomputed_path))
 
-    if maxsize == 0:
-        return plan, cache_decision, release_on_exit
+    future_index = payload["future_index"]
 
-    cache_next: Dict[Any, int] = {}
-    heap: List[Tuple[int, int, Any]] = []
-    ticket = count()
+    # 如果有预计算好的 decision_table 则直接用，否则用 C++ 现场计算
+    if "decision_table" in payload:
+        decision_table = payload["decision_table"]
+    else:
+        # Compatibility fallback or rebuild (usually safetensors will include it)
+        decision_table = build_opt_plan(future_index, maxsize)
 
-    for position in range(total_iterations):
-        key = future_index[position]
-        next_pos = next_occurrence[position]
+    # 2. 槽位映射 [dataset_size] -> slot_idx (-1 for missing)
+    slot_map = torch.full((dataset_size,), -1, dtype=torch.int64)
 
-        if key in cache_next:
-            if next_pos is None:
-                cache_next.pop(key, None)
-                release_on_exit[position] = key
+    # 3. 共享空闲槽位栈
+    free_slots = torch.arange(maxsize, dtype=torch.int64)
+
+    # 4. 元数据 [16]
+    # idx 0: global_idx, 1: hits, 2: misses, 3: evicts, 4: free_stack_top, 8: prefetch_cursor
+    meta = torch.zeros(16, dtype=torch.int64)
+    meta[4] = maxsize  # 初期栈顶在末尾
+
+    # 设为共享内存
+    future_index = future_index.share_memory_()
+    decision_table = decision_table.share_memory_()
+    slot_map = slot_map.share_memory_()
+    free_slots = free_slots.share_memory_()
+    meta = meta.share_memory_()
+
+    return meta, decision_table, slot_map, free_slots, future_index
+
+
+class SharedOPTCacheDecorator:
+    """高性能跨进程 OPT 缓存装饰器。"""
+
+    def __init__(
+        self,
+        precomputed_path: Union[str, Path],
+        maxsize: int,
+        dataset_size: int,
+        item_shape: Tuple[int, ...],
+        item_dtype: torch.dtype = torch.float32,
+        prefetch_lookahead: int = 0,
+    ) -> None:
+        # ... existing validation ...
+        if maxsize <= 0:
+            raise ValueError("SharedOPTCacheDecorator requires maxsize > 0")
+
+        self.maxsize = maxsize
+        self.item_shape = item_shape
+        self.item_dtype = item_dtype
+        self.prefetch_lookahead = prefetch_lookahead
+
+        # 准备共享内存
+        (
+            self._meta,
+            self._decision_table,
+            self._slot_map,
+            self._free_slots,
+            self._future_index,
+        ) = prepare_shared_tensors(precomputed_path, dataset_size, maxsize)
+
+        self.total_iter = len(self._future_index)
+
+        # 预分配数据池
+        self._pool = torch.zeros(
+            (maxsize, *item_shape), dtype=item_dtype
+        ).share_memory_()
+
+        self._core_instance = None
+        self._prefetch_started = False
+
+    @property
+    def core(self):
+        # ...
+        if self._core_instance is None:
+            self._core_instance = OPTCore(
+                self._meta,
+                self._decision_table,
+                self._slot_map,
+                self._free_slots,
+                self._pool,
+            )
+        return self._core_instance
+
+    def stats(self) -> Dict[str, Any]:
+        # ...
+        m = self._meta
+        hits = int(m[1])
+        miss = int(m[2])
+        total = hits + miss
+        return {
+            "current": int(m[0]),
+            "hits": hits,
+            "miss": miss,
+            "evict": int(m[3]),
+            "hit_rate": (hits / total) if total else 0.0,
+            "pool_free": int(m[4]),
+            "pool_utilized": self.maxsize - int(m[4]),
+            "prefetch_cursor": int(m[8]),
+        }
+
+    def __call__(self, func: Callable):
+        # 注意：这里不能在外部获取 self.core 或 pool，否则 C++ 对象会被捕获到闭包中导致 pickling 失败。
+        # 必须全部在 wrapper 内部延迟获取。
+        item_dtype = self.item_dtype
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            core_obj = self.core  # 延迟加载/获取 C++ 引擎
+
+            if not self._prefetch_started and self.prefetch_lookahead > 0:
+                core_obj.start_prefetch(
+                    func, self.prefetch_lookahead, self._future_index
+                )
+                self._prefetch_started = True
+
+            input_index = OPTCacheDecorator._extract_index(args)
+
+            val = core_obj.execute_step(input_index)
+
+            if val >= 0:
+                return self._pool[val]
+
+            data = func(*args, **kwargs)
+
+            if val < -1:
+                slot = -(val + 2)
+                if not torch.is_tensor(data):
+                    data_t = torch.as_tensor(data, dtype=item_dtype)
+                else:
+                    data_t = data
+                core_obj.update_cache(slot, data_t)
+
+            return data
+
+        return wrapper
+
+
+class CachetoolsDecorator:
+    """A picklable decorator for cachetools caches."""
+
+    def __init__(self, cache: Any) -> None:
+        self.cache = cache
+
+    def __call__(self, func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # Extract index from args.
+            # Usually, it's either (index,) for bound methods or (self, index) for unbound.
+            if len(args) >= 2:
+                idx = args[1]
+            elif len(args) == 1:
+                idx = args[0]
             else:
-                cache_next[key] = next_pos
-                heapq.heappush(heap, (-next_pos, next(ticket), key))
-            continue
+                raise ValueError("Target function must have at least one argument (the index)")
 
-        if next_pos is None:
-            # 不会再访问，跳过缓存
-            continue
+            if idx in self.cache:
+                return self.cache[idx]
+            result = func(*args, **kwargs)
+            try:
+                self.cache[idx] = result
+            except ValueError:
+                # Some caches might raise ValueError if item is too large
+                pass
+            return result
 
-        if len(cache_next) >= maxsize:
-            victim_key: Optional[Any] = None
-            while heap:
-                neg_value, _, candidate_key = heapq.heappop(heap)
-                candidate_value = -neg_value
-                if candidate_key not in cache_next:
-                    continue
-                if cache_next[candidate_key] != candidate_value:
-                    continue
-                victim_key = candidate_key
-                break
-            if victim_key is None:
-                raise RuntimeError("未能找到可淘汰的元素")
-            cache_next.pop(victim_key, None)
-            plan[position] = (victim_key, False)
-
-        cache_next[key] = next_pos
-        cache_decision[position] = True
-        heapq.heappush(heap, (-next_pos, next(ticket), key))
-
-    return plan, cache_decision, release_on_exit
-
-
-def _load_precomputed_data(path: Union[str, Path]) -> Tuple[List[Any], List[Optional[int]], List[Optional[Tuple[Any, bool]]], List[bool], List[Optional[Any]]]:
-    """
-    加载离线预计算数据。
-    
-    Returns:
-        Tuple of (future_index, next_occurrence, eviction_plan, cache_decision, release_on_exit)
-    """
-    with Path(path).open("rb") as handle:
-        payload = pickle.load(handle)
-    
-    return (
-        payload["future_index"],
-        payload["next_occurrence"],
-        payload["eviction_plan"],
-        payload["cache_decision"],
-        payload["release_on_exit"],
-    )
+        return wrapper
 
 
 class OPTCacheDecorator:
@@ -222,46 +269,58 @@ class OPTCacheDecorator:
     ) -> None:
         """
         初始化OPT缓存装饰器。
-        
+
         Args:
             precomputed_path: 预计算文件路径（包含所有离线预计算结果）
             maxsize: 缓存容量（必须与预计算时使用的 maxsize 一致）
             total_iter: 总迭代次数（必须与预计算时的 total_iterations 一致）
-            
+
         Raises:
             ValueError: 当 maxsize 为负或预计算数据长度不足时
         """
         if maxsize < 0:
             raise ValueError("maxsize 必须为非负整数")
-        
+
         self.maxsize = maxsize
         self.total_iter = total_iter
-        
-        # 运行期状态
-        self._current = 0
+
+        # 运行期状态：使用共享内存以支持多进程下的统计汇总
+        # [0]: hits, [1]: miss, [2]: evict, [3]: current_idx
+        self._stats = torch.zeros(4, dtype=torch.int64).share_memory_()
+        self._lock = torch.multiprocessing.Lock()
+
         self._cache: Dict[Any, Any] = {}
-        self._hits = 0
-        self._miss = 0
-        self._evict = 0
-        
+
         # 如果缓存大小为0，不需要加载预计算数据
         if maxsize == 0:
             self.future_index = []
-            self._next_occurrence = []
             self._eviction_plan: List[Optional[Tuple[Any, bool]]] = []
             self._cache_decision: List[bool] = []
             self._release_on_exit: List[Optional[Any]] = []
             return
-        
-        # 加载离线预计算数据（无需运行时计算）
-        (
-            self.future_index,
-            self._next_occurrence,
-            self._eviction_plan,
-            self._cache_decision,
-            self._release_on_exit,
-        ) = _load_precomputed_data(precomputed_path)
-        
+
+        # 加载离线预计算数据
+        payload = safetensors.torch.load_file(str(precomputed_path))
+        self.future_index = payload["future_index"].tolist()
+        if "decision_table" in payload:
+            # Optimized C++ generated table
+            dt = payload["decision_table"]
+            self._cache_decision = (dt[:, 0] == 1).tolist()
+
+            # Reconstruct eviction_plan and release from decision table
+            self._eviction_plan = [None] * len(dt)
+            dt_list = dt.tolist()
+
+            self._eviction_plan = [
+                (int(row[1]), False) if row[1] != -1 else None for row in dt_list
+            ]
+            self._release_on_exit = [
+                int(row[2]) if row[2] != -1 else None for row in dt_list
+            ]
+        else:
+            # Should not happen with new generator
+            raise ValueError("Safetensors file missing 'decision_table'")
+
         # 验证预计算数据长度
         if len(self.future_index) < total_iter:
             raise ValueError(
@@ -271,26 +330,25 @@ class OPTCacheDecorator:
 
     def stats(self) -> Dict[str, Any]:
         """返回缓存统计信息。"""
-        total_hits = self._hits
-        total_miss = self._miss
-        total = total_hits + total_miss
-        hit_rate = (total_hits / total) if total else 0.0
+        hits = int(self._stats[0])
+        miss = int(self._stats[1])
+        total = hits + miss
+        hit_rate = (hits / total) if total else 0.0
 
         return {
-            "current": self._current,
+            "current": int(self._stats[3]),
             "size": len(self._cache),
             "capacity": self.maxsize,
-            "hits": total_hits,
-            "miss": total_miss,
-            "evict": self._evict,
+            "hits": hits,
+            "miss": miss,
+            "evict": int(self._stats[2]),
             "hit_rate": hit_rate,
         }
 
     def reset(self) -> None:
         """重置运行期状态。"""
-        self._current = 0
+        self._stats.zero_()
         self._cache.clear()
-        self._hits = self._miss = self._evict = 0
 
     def __call__(self, func: Callable):
         @wraps(func)
@@ -307,7 +365,7 @@ class OPTCacheDecorator:
         if release_key is not None:
             removed = self._cache.pop(release_key, None)
             if removed is not None:
-                self._evict += 1
+                self._stats[2] += 1  # evict
 
     @staticmethod
     def _extract_index(args: Tuple[Any, ...]) -> Any:
@@ -330,24 +388,26 @@ class OPTCacheDecorator:
         args: Tuple[Any, ...],
         kwargs: Dict[str, Any],
     ) -> Any:
-        if self._current >= self.total_iter:
-            raise IndexError(
-                f"访问次数超过预生成未来序列长度 total_iter={self.total_iter}"
-            )
+        # 线程安全地获取并递增全局索引
+        with self._lock:
+            current_pos = int(self._stats[3])
+            if current_pos >= self.total_iter:
+                raise IndexError(
+                    f"访问次数超过预生成未来序列长度 total_iter={self.total_iter}"
+                )
+            self._stats[3] += 1
 
         input_index = self._extract_index(args)
-        current_pos = self._current
 
         # 缓存命中
         if input_index in self._cache:
-            self._hits += 1
+            self._stats[0] += 1  # hits
             result = self._cache[input_index]
             self._handle_release(current_pos)
-            self._current += 1
             return result
 
         # 缓存未命中
-        self._miss += 1
+        self._stats[1] += 1  # miss
         result = func(*args, **kwargs)
 
         # 根据预计算决策判断是否需要缓存
@@ -358,12 +418,11 @@ class OPTCacheDecorator:
                 victim_key, _ = plan_entry
                 evicted = self._cache.pop(victim_key, None)
                 if evicted is not None:
-                    self._evict += 1
-            
+                    self._stats[2] += 1  # evict
+
             # 缓存新项
             self._cache[input_index] = result
 
         # 处理需要释放的键（预计算）
         self._handle_release(current_pos)
-        self._current += 1
         return result
