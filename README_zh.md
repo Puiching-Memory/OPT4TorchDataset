@@ -22,10 +22,13 @@ Plug-and-Play Optimal Page Replacement Algorithm (OPT) for Torch Dataset
 
 ![flow.png](media/伪随机数缓存的一种方法.drawio.svg)
 
-## OPT的局限性
+## 多进程加载与分布式支持
 
-**在多进程数据加载（`num_workers > 0`）中，OPT 和其他所有缓存方法的收益都显著降低。**  
-多个工作进程可以并行预加载数据，这本身就能掩盖数据传输延迟。
+**本项目已完成多进程环境（`num_workers > 0`）下的完全适配：**
+
+1.  **Shared OPT Cache**: 通过 `SharedOPTCacheDecorator` 实现跨进程式的高效共享缓存。它利用共享内存技术，确保所有数据加载进程访问同一个缓存池，最大化利用内存并显著降低样本生成的计算开销。
+2.  **Picklable Caches**: 所有的传统缓存（LRU, LFU, FIFO, RR）现在均通过 `CachetoolsDecorator` 进行了序列化适配，可以在 Windows 等系统的 `spawn` 模式下正常运行，不再报 `PicklingError`。
+3.  **计算优势**: 在 CPU 变换逻辑复杂（如高分辨率图像增强）的场景下，即使有并行预加载，OPT 缓存依然能通过消除重复计算带来客观的性能提升。
 
 ## Install
 ```bash

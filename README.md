@@ -22,10 +22,13 @@ In deep learning training, data access patterns are usually **predictable** (det
 
 ![flow.png](media/伪随机数缓存的一种方法.drawio.svg)
 
-## Limitations of OPT
+## Multi-process Loading and Distributed Support
 
-**In multi-process data loading (`num_workers > 0`), the benefits of OPT and all other caching methods are significantly reduced.**
-Multiple worker processes can prefetch data in parallel, which itself can mask data transmission latency.
+**The project now fully supports multi-process environments (`num_workers > 0`):**
+
+1.  **Shared OPT Cache**: The `SharedOPTCacheDecorator` implements efficient cross-process shared caching. It utilizes shared memory technology to ensure all data loading processes access the same cache pool, maximizing memory utilization and significantly reducing computation overhead for sample generation.
+2.  **Picklable Caches**: All traditional caches (LRU, LFU, FIFO, RR) are now picklable via the `CachetoolsDecorator`. They can run correctly under the `spawn` start method (common on Windows) without `PicklingError`.
+3.  **Computational Advantage**: In scenarios with complex CPU transformations (e.g., high-resolution image augmentation), OPT caching still provides substantial performance gains by eliminating redundant computations, even when parallel prefetching is enabled.
 
 ## Install
 ```bash
