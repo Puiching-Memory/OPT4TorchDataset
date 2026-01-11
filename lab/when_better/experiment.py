@@ -14,7 +14,7 @@ from copy import deepcopy
 import torch
 import typer
 from loguru import logger
-from torch.utils.data import DataLoader, RandomSampler
+from torch.utils.data import DataLoader
 from cachetools import cached, LRUCache, LFUCache, FIFOCache, RRCache
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -24,7 +24,7 @@ if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from lib.zipf_dataset import ZipfDataset
-from OPT4TorchDataSet.cachelib import OPTCacheDecorator, generate_precomputed_file
+from OPT4TorchDataSet import get_opt_cache, generate_precomputed_file
 
 # Setup logging
 OUTPUT_DIR = Path(__file__).parent / "results"
@@ -49,11 +49,11 @@ def save_results_to_json(results: List[Dict], output_path: Path):
 class CacheExperiment:
     def __init__(
         self,
-        caches: Optional[List[Tuple[str, float, Any]]] = None,
+        caches: List[Tuple[str, float, Any]],
         output_dir: Union[str, Path] = "results",
         batch_size: int = 32,
         num_workers: int = 0,
-        dataset: Optional[torch.utils.data.Dataset] = None,
+        dataset: Optional[ZipfDataset] = None,
         epochs: int = 1,
         zipf_alpha: float = 1.0,
     ):
@@ -69,6 +69,8 @@ class CacheExperiment:
 
     def _run_single_experiment(self, cache, access_sequence: torch.Tensor) -> float:
         """Run single experiment focused on speed and time cost"""
+        if self.dataset is None:
+            raise ValueError("Dataset cannot be None")
 
         # 创建新的数据集实例，确保每次实验都从干净状态开始
         dataset = deepcopy(self.dataset)
@@ -77,6 +79,7 @@ class CacheExperiment:
 
         # 使用 Subset 来强制执行预定义的访问序列
         from torch.utils.data import Subset
+
         subset = Subset(dataset, access_sequence.tolist())
 
         dataloader = DataLoader(
@@ -150,10 +153,12 @@ def main(
 
     for alpha in zipf_alphas:
         caches: List[Tuple[str, float, object]] = []
-        
+
         # 为当前 alpha 创建数据集并生成固定的访问序列
         dataset = ZipfDataset(dataset_size, alpha=alpha, seed=0)
-        future_index = torch.tensor(dataset.generate_access_sequence(total_iter, seed=0), dtype=torch.int64)
+        future_index = torch.tensor(
+            dataset.generate_access_sequence(total_iter, seed=0), dtype=torch.int64
+        )
 
         caches.append(("Warmup", 0.0, cached(LRUCache(maxsize=dataset_size))))
 
@@ -211,10 +216,12 @@ def main(
                     (
                         "OPT",
                         size,
-                        OPTCacheDecorator(
+                        get_opt_cache(
+                            mode="python",
                             precomputed_path=precomputed_path,
                             maxsize=cache_size,
                             total_iter=total_iter,
+                            num_workers=0,
                         ),
                     )
                 )

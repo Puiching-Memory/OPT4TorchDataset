@@ -13,7 +13,7 @@ import sys
 import time
 import json
 from pathlib import Path
-from typing import Optional, List, Dict, Callable, Tuple
+from typing import Optional, Callable, Tuple
 
 import torch
 import typer
@@ -29,10 +29,9 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from OPT4TorchDataSet.cachelib import (
+from OPT4TorchDataSet import (
     generate_precomputed_file,
-    OPTCacheDecorator,
-    SharedOPTCacheDecorator,
+    get_opt_cache,
 )
 
 # Setup logging
@@ -45,12 +44,13 @@ logger.add(OUTPUT_DIR / "experiment.log", rotation="10 MB")
 
 class HeavyDataset(Dataset):
     """A dataset that simulates heavy computation or IO."""
+
     def __init__(
         self,
         size: int,
         compute_time: float = 0.002,
         cache_obj: Optional[Callable] = None,
-        shape: Tuple[int, ...] = (3, 64, 64)
+        shape: Tuple[int, ...] = (3, 64, 64),
     ):
         self.size = size
         self.compute_time = compute_time
@@ -105,6 +105,7 @@ def run_test(
     except Exception as e:
         logger.error(f"Test [{label}] failed: {e}")
         import traceback
+
         traceback.print_exc()
         return 0, 0
 
@@ -130,7 +131,9 @@ def perf(
     cache_ratio: float = typer.Option(0.2, help="Cache ratio (0.0 - 1.0)"),
     total_iters: int = typer.Option(5000, help="Total iterations to simulate"),
     workers: int = typer.Option(4, help="Number of DataLoader workers"),
-    sim_time: float = typer.Option(0.005, help="Simulated IO/Compute time per item (seconds)"),
+    sim_time: float = typer.Option(
+        0.005, help="Simulated IO/Compute time per item (seconds)"
+    ),
 ):
     """
     Performance Comparison: Compare No-Cache vs Local-Python-Cache vs Shared-C++-Cache.
@@ -162,28 +165,58 @@ def perf(
     results_data.append({"method": "No Cache", "throughput": t, "hit_rate": h})
 
     # Scenario B: Local Python Cache
-    local_cache = OPTCacheDecorator(precomputed_path, maxsize, total_iters)
-    ds_local = HeavyDataset(dataset_size, sim_time, cache_obj=local_cache, shape=item_shape)
-    t, h = run_test("Local Cache (Py)", ds_local, workers, total_iters, seed, stats_func=local_cache.stats)
+    local_cache = get_opt_cache(
+        mode="python",
+        precomputed_path=precomputed_path,
+        maxsize=maxsize,
+        total_iter=total_iters,
+        num_workers=0,
+    )
+    ds_local = HeavyDataset(
+        dataset_size, sim_time, cache_obj=local_cache, shape=item_shape
+    )
+    t, h = run_test(
+        "Local Cache (Py)",
+        ds_local,
+        workers,
+        total_iters,
+        seed,
+        stats_func=local_cache.stats,
+    )
     results_data.append({"method": "Local Cache (Py)", "throughput": t, "hit_rate": h})
 
     # Scenario C: Shared C++ Cache
-    shared_cache = SharedOPTCacheDecorator(
+    shared_cache = get_opt_cache(
+        mode="cpp",
         precomputed_path=precomputed_path,
         maxsize=maxsize,
         dataset_size=dataset_size,
         item_shape=item_shape,
+        num_workers=workers,
     )
-    ds_shared = HeavyDataset(dataset_size, sim_time, cache_obj=shared_cache, shape=item_shape)
-    t, h = run_test("Shared Cache (C++)", ds_shared, workers, total_iters, seed, stats_func=shared_cache.stats)
-    results_data.append({"method": "Shared Cache (C++)", "throughput": t, "hit_rate": h})
+    ds_shared = HeavyDataset(
+        dataset_size, sim_time, cache_obj=shared_cache, shape=item_shape
+    )
+    t, h = run_test(
+        "Shared Cache (C++)",
+        ds_shared,
+        workers,
+        total_iters,
+        seed,
+        stats_func=shared_cache.stats,
+    )
+    results_data.append(
+        {"method": "Shared Cache (C++)", "throughput": t, "hit_rate": h}
+    )
 
     # Print summary table
     logger.info("\n" + "=" * 55)
     logger.info(f"{'Method':<25} | {'Throughput':<15} | {'Hit Rate':<10}")
     logger.info("-" * 55)
     for res in results_data:
-        logger.info(f"{res['method']:<25} | {res['throughput']:>10.2f} it/s | {res['hit_rate']:>8.2f}%")
+        logger.info(
+            f"{res['method']:<25} | {res['throughput']:>10.2f} it/s | {res['hit_rate']:>8.2f}%"
+        )
     logger.info("=" * 55)
 
     # Save
@@ -219,28 +252,42 @@ def validate(
         maxsize=maxsize,
     )
 
-    opt_cache = SharedOPTCacheDecorator(
+    opt_cache = get_opt_cache(
+        mode="cpp",
         precomputed_path=precomputed_path,
         maxsize=maxsize,
         dataset_size=dataset_size,
         item_shape=(3, 32, 32),
+        num_workers=workers,
     )
 
-    dataset = HeavyDataset(dataset_size, compute_time=0, cache_obj=opt_cache, shape=(3, 32, 32))
-    
-    t, h = run_test("Shared Validation", dataset, workers, iterations, seed, batch_size=1, stats_func=opt_cache.stats)
+    dataset = HeavyDataset(
+        dataset_size, compute_time=0, cache_obj=opt_cache, shape=(3, 32, 32)
+    )
+
+    t, h = run_test(
+        "Shared Validation",
+        dataset,
+        workers,
+        iterations,
+        seed,
+        batch_size=1,
+        stats_func=opt_cache.stats,
+    )
 
     stats = opt_cache.stats()
-    logger.info(f"Final Stats: Hits={stats['hits']}, Misses={stats['miss']}, Hit Rate={h:.2f}%")
-    
+    logger.info(
+        f"Final Stats: Hits={stats['hits']}, Misses={stats['miss']}, Hit Rate={h:.2f}%"
+    )
+
     # Save
     results_path = OUTPUT_DIR / "validation_results.json"
     with open(results_path, "w", encoding="utf-8") as f:
         json.dump(stats, f, indent=4, ensure_ascii=False)
-    
+
     if precomputed_path.exists():
         precomputed_path.unlink()
-    
+
     logger.info("Shared OPT Cache validation successful! ✅")
 
 

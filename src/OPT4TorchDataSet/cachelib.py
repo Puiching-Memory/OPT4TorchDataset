@@ -15,6 +15,22 @@ __all__ = [
 from .atomic_extension import OPTCore, build_opt_plan
 
 
+def _extract_index(args: Tuple[Any, ...]) -> Any:
+    """从装饰器参数中提取索引。"""
+    # 处理两种情况：
+    # 1. args = (self, index) - 当装饰器装饰的是未绑定方法时
+    # 2. args = (index,) - 当装饰器装饰的是已绑定方法或函数时
+    try:
+        if len(args) >= 2:
+            return args[1]
+        elif len(args) == 1:
+            return args[0]
+        else:
+            raise IndexError("empty args")
+    except IndexError as exc:
+        raise ValueError("被装饰函数需要至少一个参数作为索引") from exc
+
+
 def generate_precomputed_file(
     dataset_size: int,
     total_iterations: int,
@@ -43,7 +59,9 @@ def generate_precomputed_file(
     # 生成访问序列
     if distribution_seq is not None:
         if len(distribution_seq) < total_iterations:
-            raise ValueError(f"提供序列长度({len(distribution_seq)})小于 total_iterations({total_iterations})")
+            raise ValueError(
+                f"提供序列长度({len(distribution_seq)})小于 total_iterations({total_iterations})"
+            )
         future_index = distribution_seq[:total_iterations].to(torch.int64)
     else:
         # 创建生成器并设置种子
@@ -130,7 +148,7 @@ class SharedOPTCacheDecorator:
         dataset_size: int,
         item_shape: Tuple[int, ...],
         item_dtype: torch.dtype = torch.float32,
-        prefetch_lookahead: int = 0,
+        **kwargs,
     ) -> None:
         # ... existing validation ...
         if maxsize <= 0:
@@ -139,7 +157,6 @@ class SharedOPTCacheDecorator:
         self.maxsize = maxsize
         self.item_shape = item_shape
         self.item_dtype = item_dtype
-        self.prefetch_lookahead = prefetch_lookahead
 
         # 准备共享内存
         (
@@ -158,7 +175,6 @@ class SharedOPTCacheDecorator:
         ).share_memory_()
 
         self._core_instance = None
-        self._prefetch_started = False
 
     @property
     def core(self):
@@ -187,8 +203,15 @@ class SharedOPTCacheDecorator:
             "hit_rate": (hits / total) if total else 0.0,
             "pool_free": int(m[4]),
             "pool_utilized": self.maxsize - int(m[4]),
-            "prefetch_cursor": int(m[8]),
         }
+
+    def reset(self) -> None:
+        """重置共享内存中的统计信息。"""
+        self._meta.zero_()
+        self._meta[4] = self.maxsize  # 重置空闲栈顶
+        self._slot_map.fill_(-1)
+        self._free_slots.copy_(torch.arange(self.maxsize, dtype=torch.int64))
+        # 注意：_pool 不需要重置，因为逻辑上 index -> slot 已经被清空了
 
     def __call__(self, func: Callable):
         # 注意：这里不能在外部获取 self.core 或 pool，否则 C++ 对象会被捕获到闭包中导致 pickling 失败。
@@ -199,14 +222,9 @@ class SharedOPTCacheDecorator:
         def wrapper(*args, **kwargs):
             core_obj = self.core  # 延迟加载/获取 C++ 引擎
 
-            if not self._prefetch_started and self.prefetch_lookahead > 0:
-                core_obj.start_prefetch(
-                    func, self.prefetch_lookahead, self._future_index
-                )
-                self._prefetch_started = True
+            input_index = _extract_index(args)
 
-            input_index = OPTCacheDecorator._extract_index(args)
-
+            # 执行缓存逻辑 (C++ 侧处理原子同步)
             val = core_obj.execute_step(input_index)
 
             if val >= 0:
@@ -236,14 +254,7 @@ class CachetoolsDecorator:
     def __call__(self, func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
-            # Extract index from args.
-            # Usually, it's either (index,) for bound methods or (self, index) for unbound.
-            if len(args) >= 2:
-                idx = args[1]
-            elif len(args) == 1:
-                idx = args[0]
-            else:
-                raise ValueError("Target function must have at least one argument (the index)")
+            idx = _extract_index(args)
 
             if idx in self.cache:
                 return self.cache[idx]
@@ -259,13 +270,14 @@ class CachetoolsDecorator:
 
 
 class OPTCacheDecorator:
-    """Belady(OPT) 缓存淘汰装饰器。"""
+    """Belady(OPT) 缓存淘汰装饰器 (纯 Python 版，适用于单进程)。"""
 
     def __init__(
         self,
         precomputed_path: Union[str, Path],
         maxsize: int,
         total_iter: int,
+        **kwargs,
     ) -> None:
         """
         初始化OPT缓存装饰器。
@@ -274,9 +286,6 @@ class OPTCacheDecorator:
             precomputed_path: 预计算文件路径（包含所有离线预计算结果）
             maxsize: 缓存容量（必须与预计算时使用的 maxsize 一致）
             total_iter: 总迭代次数（必须与预计算时的 total_iterations 一致）
-
-        Raises:
-            ValueError: 当 maxsize 为负或预计算数据长度不足时
         """
         if maxsize < 0:
             raise ValueError("maxsize 必须为非负整数")
@@ -284,10 +293,8 @@ class OPTCacheDecorator:
         self.maxsize = maxsize
         self.total_iter = total_iter
 
-        # 运行期状态：使用共享内存以支持多进程下的统计汇总
-        # [0]: hits, [1]: miss, [2]: evict, [3]: current_idx
-        self._stats = torch.zeros(4, dtype=torch.int64).share_memory_()
-        self._lock = torch.multiprocessing.Lock()
+        # 运行期状态 (统计信息)
+        self._stats = [0, 0, 0, 0]  # hits, miss, evict, current_idx
 
         self._cache: Dict[Any, Any] = {}
 
@@ -347,7 +354,7 @@ class OPTCacheDecorator:
 
     def reset(self) -> None:
         """重置运行期状态。"""
-        self._stats.zero_()
+        self._stats = [0, 0, 0, 0]
         self._cache.clear()
 
     def __call__(self, func: Callable):
@@ -355,7 +362,7 @@ class OPTCacheDecorator:
         def wrapper(*args, **kwargs):
             if self.maxsize == 0:
                 return func(*args, **kwargs)
-            return self._single_worker_execute(func, args, kwargs)
+            return self._execute(func, args, kwargs)
 
         return wrapper
 
@@ -367,37 +374,22 @@ class OPTCacheDecorator:
             if removed is not None:
                 self._stats[2] += 1  # evict
 
-    @staticmethod
-    def _extract_index(args: Tuple[Any, ...]) -> Any:
-        # 处理两种情况：
-        # 1. args = (self, index) - 当装饰器装饰的是未绑定方法时
-        # 2. args = (index,) - 当装饰器装饰的是已绑定方法或函数时
-        try:
-            if len(args) >= 2:
-                return args[1]
-            elif len(args) == 1:
-                return args[0]
-            else:
-                raise IndexError("empty args")
-        except IndexError as exc:
-            raise ValueError("被装饰函数需要至少一个参数作为索引") from exc
-
-    def _single_worker_execute(
+    def _execute(
         self,
         func: Callable,
         args: Tuple[Any, ...],
         kwargs: Dict[str, Any],
     ) -> Any:
-        # 线程安全地获取并递增全局索引
-        with self._lock:
-            current_pos = int(self._stats[3])
-            if current_pos >= self.total_iter:
-                raise IndexError(
-                    f"访问次数超过预生成未来序列长度 total_iter={self.total_iter}"
-                )
-            self._stats[3] += 1
+        # 递增全局索引
+        current_pos = self._stats[3]
+        self._stats[3] += 1
 
-        input_index = self._extract_index(args)
+        if current_pos >= self.total_iter:
+            raise IndexError(
+                f"访问次数超过预生成未来序列长度 total_iter={self.total_iter}"
+            )
+
+        input_index = _extract_index(args)
 
         # 缓存命中
         if input_index in self._cache:

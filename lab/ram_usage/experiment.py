@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import List, Dict, Tuple, Optional, Union, Any
 from copy import deepcopy
 
-import torch
 import psutil
 import typer
 from loguru import logger
@@ -26,7 +25,7 @@ if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from lib.hit_rate_dataset import HitRateDataset
-from OPT4TorchDataSet.cachelib import OPTCacheDecorator, generate_precomputed_file
+from OPT4TorchDataSet import get_opt_cache, generate_precomputed_file
 
 # Setup logging
 OUTPUT_DIR = Path(__file__).parent / "results"
@@ -39,11 +38,11 @@ logger.add(OUTPUT_DIR / "experiment.log", rotation="10 MB")
 class CacheExperiment:
     def __init__(
         self,
-        caches: Optional[List[Tuple[str, float, Any]]] = None,
+        caches: List[Tuple[str, float, Any]],
         output_dir: Union[str, Path] = "results",
         batch_size: int = 32,
         num_workers: int = 0,
-        dataset: Optional[torch.utils.data.Dataset] = None,
+        dataset: Optional[HitRateDataset] = None,
         epochs: int = 1,
     ):
         self.caches = caches
@@ -57,6 +56,8 @@ class CacheExperiment:
 
     def _run_single_experiment(self, cache) -> Dict:
         """Run single experiment focused on RAM usage"""
+        if self.dataset is None:
+            raise ValueError("Dataset cannot be None")
 
         # 强制进行垃圾回收以获得更准确的基线内存使用量
         gc.collect()
@@ -98,21 +99,24 @@ class CacheExperiment:
 
         # 获取缓存统计信息
         entry_count = 0
-        if hasattr(dataset, "_getitem_impl"):
-            if hasattr(dataset._getitem_impl, "__wrapped__"):
-                cache = getattr(dataset._getitem_impl, "__wrapped__", None)
-                if (
-                    cache
-                    and hasattr(cache, "cache")
-                    and hasattr(cache.cache, "__dict__")
-                ):
-                    entry_count = (
-                        len(cache.cache) if hasattr(cache.cache, "__len__") else 0
-                    )
-                elif (
-                    cache and hasattr(cache, "__dict__") and "_cache" in cache.__dict__
-                ):
-                    entry_count = len(cache._cache)
+        # Check both _wrapped_getitem (HitRateDataset) and generic __getitem__
+        target_func = getattr(dataset, "_wrapped_getitem", None)
+        if target_func and hasattr(target_func, "__wrapped__"):
+            cache_obj = getattr(target_func, "__wrapped__", None)
+            if (
+                cache_obj
+                and hasattr(cache_obj, "cache")
+                and hasattr(cache_obj.cache, "__dict__")
+            ):
+                entry_count = (
+                    len(cache_obj.cache) if hasattr(cache_obj.cache, "__len__") else 0
+                )
+            elif (
+                cache_obj
+                and hasattr(cache_obj, "__dict__")
+                and "_cache" in cache_obj.__dict__
+            ):
+                entry_count = len(cache_obj._cache)
 
         # 清理
         del dataloader
@@ -226,10 +230,12 @@ def main(
                 (
                     "OPT",
                     size,
-                    OPTCacheDecorator(
+                    get_opt_cache(
+                        mode="python",
                         precomputed_path=precomputed_path,
                         maxsize=cache_size,
                         total_iter=total_iter,
+                        num_workers=0,
                     ),
                 )
             )

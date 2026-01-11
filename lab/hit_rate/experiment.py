@@ -9,13 +9,12 @@
 import json
 import sys
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional, Union, Any
+from typing import List, Tuple, Optional, Union, Any
 
-import torch
 import typer
 from loguru import logger
 from torch.utils.data import DataLoader, RandomSampler
-from cachetools import cached, LRUCache, LFUCache, FIFOCache, RRCache
+from cachetools import LRUCache, LFUCache, FIFOCache, RRCache
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -24,10 +23,11 @@ if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from lib.hit_rate_dataset import HitRateDataset
+from OPT4TorchDataSet import get_opt_cache, generate_precomputed_file
 from OPT4TorchDataSet.cachelib import (
     OPTCacheDecorator,
+    SharedOPTCacheDecorator,
     CachetoolsDecorator,
-    generate_precomputed_file,
 )
 
 # Setup logging
@@ -41,11 +41,11 @@ logger.add(OUTPUT_DIR / "experiment.log", rotation="10 MB")
 class CacheExperiment:
     def __init__(
         self,
-        caches: Optional[List[Tuple[str, float, Any]]] = None,
+        caches: List[Tuple[str, float, Any]],
         output_dir: Union[str, Path] = "results",
         batch_size: int = 32,
         num_workers: int = 0,
-        dataset: Optional[torch.utils.data.Dataset] = None,
+        dataset: Optional[HitRateDataset] = None,
         epochs: int = 1,
     ):
         """
@@ -78,9 +78,13 @@ class CacheExperiment:
         Returns:
             float: 未命中次数
         """
+        if self.caches is None:
+            raise ValueError("Caches list cannot be None")
+        if self.dataset is None:
+            raise ValueError("Dataset cannot be None")
 
         # 创建新的数据集实例，确保每次实验都从干净状态开始
-        dataset = HitRateDataset(len(self.dataset.dataset))
+        dataset = HitRateDataset(len(self.dataset))
         dataset.setCache(cache)
 
         dataloader = DataLoader(
@@ -104,13 +108,17 @@ class CacheExperiment:
 
     def run(self):
         """运行所有缓存实验并保存结果"""
+        if self.caches is None:
+            raise ValueError("Caches list cannot be None")
+        if self.dataset is None:
+            raise ValueError("Dataset cannot be None")
 
         logger.info("Starting Cache Performance Experiments")
         results = []
 
         for name, cache_size, cache in self.caches:
             # 对于OPT缓存，需要重置状态
-            if isinstance(cache, OPTCacheDecorator):
+            if isinstance(cache, (OPTCacheDecorator, SharedOPTCacheDecorator)):
                 cache.reset()
 
             miss_count = self._run_single_experiment(cache)
@@ -201,10 +209,12 @@ def main(
 
                 logger.info(f"预计算文件生成完成: {precomputed_path}")
 
-            opt_decorator = OPTCacheDecorator(
+            opt_decorator = get_opt_cache(
+                mode="python",
                 precomputed_path=precomputed_path,
                 maxsize=cache_size,
                 total_iter=total_iter,
+                num_workers=0,
             )
             caches.append(("OPT", size, opt_decorator))
 

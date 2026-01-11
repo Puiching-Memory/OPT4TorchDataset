@@ -54,14 +54,6 @@ class OPTCore:
     def update_cache(self, slot: int, data: torch.Tensor) -> None:
         self._core.update_cache(slot, data)
 
-    def start_prefetch(
-        self, loader_func, lookahead: int, future_index: torch.Tensor
-    ) -> None:
-        self._core.start_prefetch(loader_func, lookahead, future_index)
-
-    def stop_prefetch(self) -> None:
-        self._core.stop_prefetch()
-
 
 def build_opt_plan(future_index: torch.Tensor, maxsize: int) -> torch.Tensor:
     """Build OPT eviction plan and decision table using C++."""

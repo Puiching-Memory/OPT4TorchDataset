@@ -39,35 +39,39 @@ pip install OPT4TorchDataset
 
 ## Quick Start
 
-### Method 1: API
+### Method 1: Using get_opt_cache (Recommended)
 
 ```python
-from OPT4TorchDataSet.cachelib import generate_precomputed_file, OPTCacheDecorator
+from OPT4TorchDataSet import generate_precomputed_file, get_opt_cache
 from torch.utils.data import DataLoader
 
 # Step 1: Offline generation of precomputed file (one-time)
 generate_precomputed_file(
     dataset_size=10000,
     total_iterations=100000,
-    persist_path="precomputed/my_experiment.safetensors",
+    persist_path="precomputed/my_plan.safetensors",
     random_seed=0,
-    replacement=True,
     maxsize=3000
 )
 
-# Step 2: Create cache decorator at runtime
-decorator = OPTCacheDecorator(
-    precomputed_path="precomputed/my_experiment.safetensors",
-    maxsize=3000, # Must be consistent with maxsize during precomputation
-    total_iter=100000
+# Step 2: Create cache decorator (Intelligent mode: auto-handles single/multi-process)
+# num_workers=0 automatically uses high-performance Python version
+# num_workers>0 automatically uses Shared Memory C++ version
+dataset = MyDataset()
+dataset.cache = get_opt_cache(
+    num_workers=0,
+    precomputed_path="precomputed/my_plan.safetensors",
+    maxsize=3000,
+    total_iter=100000,           # Required for Python mode
+    dataset_size=10000,          # Required for Shared Memory (C++) mode
+    item_shape=(3, 224, 224)    # Required for Shared Memory (C++) mode
 )
 
 # Step 3: Apply to dataset
-dataset = MyDataset()
-dataset.__getitem__ = decorator(dataset.__getitem__)
+dataset.__getitem__ = dataset.cache(dataset.__getitem__)
 
 # Use DataLoader
-dataloader = DataLoader(dataset, batch_size=32)
+dataloader = DataLoader(dataset, batch_size=32, num_workers=0)
 for batch in dataloader:
     pass
 ```

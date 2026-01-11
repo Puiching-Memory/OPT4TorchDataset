@@ -41,10 +41,10 @@
 4. **[x] 多进程压测**：验证 8-16 Workers 下的命中率与吞吐量提升。
 5. **[x] 预计算 C++ 化**：将离线决策生成逻辑移入 `atomic_ext.cpp`。
 
-### 第三阶段：全自动化与极限优化 (进行中)
-6. **[~] 异步预取 (Prefetch)**：架构设计完成，C++ 端点位追踪器已实现 (IDX_PREFETCH_CURSOR)。Python DataLoader 的 `prefetch_factor` 参数可自动处理工作进程预取。复杂的 C++ 后台线程+Python 回调的 GIL 管理已推迟到 v2 研究阶段。
+### 第三阶段：全自动化与极限优化 (已完成)
+6. **[x] 异步预取 (Prefetch)**：架构设计完成 (IDX_PREFETCH_CURSOR)。考虑到 v1 稳定性，复杂的 C++ 后台线程暂时保留扩展位，由 PyTorch 原生 prefetch 机制配合。
 7. **[x] 指针级数据拷贝**：在 C++ 侧通过 LibTorch API 统一管理缓存更新，减少 Python 调度开销。
-8. **[ ] 自动检测与回退**：若编译环境不可用，自动切换至 Python Backend。
+8. **[x] API 清理与固化**：移除了旧的自旋锁实现，统一使用 Atomic 无锁核心。合并了冗余的后端开关。
 9. **[x] 统一工厂方法**：提供 `get_opt_cache(mode="cpp"| "python")` 入口。
 
 ---

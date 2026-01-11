@@ -28,11 +28,9 @@ if str(PROJECT_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from lib.ramRGB_dataset import RandomRGBDataset
+from OPT4TorchDataSet import get_opt_cache, generate_precomputed_file
 from OPT4TorchDataSet.cachelib import (
-    OPTCacheDecorator,
-    SharedOPTCacheDecorator,
     CachetoolsDecorator,
-    generate_precomputed_file,
 )
 
 # Setup logging
@@ -62,7 +60,9 @@ class ExperimentConfig:
     # dataset_class = MiniImageNetDataset
     # dataset_params: Dict[str, Any] = {"split": "train"}
     dataset_class = RandomRGBDataset
-    dataset_params: Dict[str, Any] = {"data_dir": str(PROJECT_ROOT / "data" / "random_rgb_dataset")}
+    dataset_params: Dict[str, Any] = {
+        "data_dir": str(PROJECT_ROOT / "data" / "random_rgb_dataset")
+    }
 
     cache_types: List[str] = ["none", "LRU", "LFU", "FIFO", "RR", "OPT"]
     # cache_types: List[str] = ["OPT"]
@@ -132,23 +132,17 @@ class CacheExperiment:
             dataset.setCache(CachetoolsDecorator(cache))
         elif cache_type == "OPT":
             total_iterations = dataset_size * self.config.epochs
+            sample_img, _ = dataset[0]
 
-            if self.config.num_workers > 0:
-                # 获取样本形状和类型以初始化共享内存
-                sample_img, _ = dataset[0]
-                opt_cache = SharedOPTCacheDecorator(
-                    precomputed_path=self.precomputed_path,
-                    maxsize=cache_size,
-                    dataset_size=dataset_size,
-                    item_shape=sample_img.shape,
-                    item_dtype=sample_img.dtype,
-                )
-            else:
-                opt_cache = OPTCacheDecorator(
-                    precomputed_path=self.precomputed_path,
-                    maxsize=cache_size,
-                    total_iter=total_iterations,
-                )
+            opt_cache = get_opt_cache(
+                precomputed_path=self.precomputed_path,
+                maxsize=cache_size,
+                dataset_size=dataset_size,
+                total_iter=total_iterations,
+                item_shape=sample_img.shape,
+                item_dtype=sample_img.dtype,
+                num_workers=self.config.num_workers,
+            )
 
             # 使用 setCache 方法应用 OPT 缓存装饰器
             dataset.setCache(opt_cache)
@@ -169,10 +163,10 @@ class CacheExperiment:
         dataset_size = len(dataset)
         warmup_iterations = dataset_size * self.config.warmup_epochs
         timed_iterations = dataset_size * self.config.epochs
-        
+
         total_iterations = warmup_iterations + timed_iterations
         batches_per_epoch = max(1, math.ceil(dataset_size / self.config.batch_size))
-        
+
         warmup_batches = warmup_iterations // self.config.batch_size
         total_batches = total_iterations // self.config.batch_size
         timed_batches = total_batches - warmup_batches
@@ -207,6 +201,7 @@ class CacheExperiment:
             TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
             TimeRemainingColumn(),
             TextColumn("{task.fields[postfix]}"),
+            transient=True,  # 任务完成后清除进度条
         ) as progress:
             task = progress.add_task(
                 f"Training {model_name} (Cache: {cache_type}, Ratio: {cache_size_ratio})",
@@ -225,21 +220,29 @@ class CacheExperiment:
                     labels = labels.to(device, non_blocking=True)
 
                     optimizer.zero_grad()
-                    with torch.amp.autocast("cuda", enabled=self.config.enable_amp):
+                    with torch.cuda.amp.autocast(enabled=self.config.enable_amp):
                         outputs = model(images)
                         loss = loss_fn(outputs, labels)
                         scaler.scale(loss).backward()
                         scaler.step(optimizer)
                         scaler.update()
-                    
+
                     progress.update(task, advance=1, postfix="[Warmup]")
             else:
                 data_iter = iter(dataloader)
 
             # Timed phase
             progress.update(task, description=f"Training {model_name}")
+
+            # Reset cache stats before timed phase for accurate hit rate
+            if hasattr(dataset, "resetMissCount"):
+                dataset.resetMissCount()
+            decorator = getattr(dataset, "cache_decorator", None)
+            if decorator is not None and hasattr(decorator, "reset"):
+                decorator.reset()
+
             start_time = time.perf_counter()
-            
+
             for step in range(1, timed_batches + 1):
                 batch_data = next(data_iter)
                 images, labels = batch_data
@@ -248,7 +251,7 @@ class CacheExperiment:
 
                 optimizer.zero_grad()
 
-                with torch.amp.autocast("cuda", enabled=self.config.enable_amp):
+                with torch.cuda.amp.autocast(enabled=self.config.enable_amp):
                     outputs = model(images)
                     loss = loss_fn(outputs, labels)
                     scaler.scale(loss).backward()
@@ -263,7 +266,26 @@ class CacheExperiment:
                 )
 
             total_training_time = time.perf_counter() - start_time
-            logger.info(f"Total time (timed): {total_training_time:.4f}s")
+
+        # Calculate hit rate
+        hit_rate = 0.0
+        if cache_type != "none":
+            decorator = getattr(dataset, "cache_decorator", None)
+            if decorator is not None and hasattr(decorator, "stats"):
+                stats = decorator.stats()
+                hit_rate = stats.get("hit_rate", 0.0)
+            else:
+                # Fallback to dataset miss count
+                misses = dataset.getMissCount()
+                total_samples = timed_batches * self.config.batch_size
+                if total_samples > 0:
+                    hits = total_samples - misses
+                    hit_rate = hits / total_samples
+
+        # 将日志记录移到 block 外部，确保进度条已清除
+        logger.info(
+            f"Total time (timed): {total_training_time:.4f}s, Hit Rate: {hit_rate:.2%}"
+        )
 
         # Collect results
         result = {
@@ -271,6 +293,7 @@ class CacheExperiment:
             "cache_type": cache_type,
             "cache_size_ratio": cache_size_ratio,
             "training_time": total_training_time,
+            "hit_rate": hit_rate,
             "batch_size": self.config.batch_size,
             "num_workers": self.config.num_workers,
             "enable_amp": self.config.enable_amp,
@@ -330,7 +353,9 @@ def main(
     batch_size: int = typer.Option(16, help="Batch size for training"),
     num_workers: int = typer.Option(0, help="Number of workers for dataloader"),
     use_amp: bool = typer.Option(True, help="Enable automatic mixed precision"),
-    cache_types: str = typer.Option("none,LRU,LFU,FIFO,RR,OPT", help="Comma-separated list of cache types"),
+    cache_types: str = typer.Option(
+        "none,LRU,LFU,FIFO,RR,OPT", help="Comma-separated list of cache types"
+    ),
 ):
     """
     Run the training speed experiment comparing different cache strategies.

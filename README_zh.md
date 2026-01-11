@@ -39,35 +39,39 @@ pip install OPT4TorchDataset
 
 ## Quick Start
 
-### Method 1: API
+### Method 1: 使用 get_opt_cache (推荐)
 
 ```python
-from OPT4TorchDataSet.cachelib import generate_precomputed_file, OPTCacheDecorator
+from OPT4TorchDataSet import generate_precomputed_file, get_opt_cache
 from torch.utils.data import DataLoader
 
 # Step 1: 离线生成预计算文件（一次性）
 generate_precomputed_file(
     dataset_size=10000,
     total_iterations=100000,
-    persist_path="precomputed/my_experiment.safetensors",
+    persist_path="precomputed/my_plan.safetensors",
     random_seed=0,
-    replacement=True,
     maxsize=3000
 )
 
-# Step 2: 运行时创建缓存装饰器
-decorator = OPTCacheDecorator(
-    precomputed_path="precomputed/my_experiment.safetensors",
-    maxsize=3000, # 必须与预计算时的maxsize一致
-    total_iter=100000
+# Step 2: 运行时创建缓存装饰器（智能模式：自动处理单进程/多进程）
+# num_workers=0 会自动使用高性能 Python 版
+# num_workers>0 会自动使用共享内存 C++ 版
+dataset = MyDataset()
+dataset.cache = get_opt_cache(
+    num_workers=0,
+    precomputed_path="precomputed/my_plan.safetensors",
+    maxsize=3000,
+    total_iter=100000,           # Python 模式需要
+    dataset_size=10000,          # 共享内存 (C++) 模式需要
+    item_shape=(3, 224, 224)    # 共享内存 (C++) 模式需要
 )
 
 # Step 3: 应用到数据集
-dataset = MyDataset()
-dataset.__getitem__ = decorator(dataset.__getitem__)
+dataset.__getitem__ = dataset.cache(dataset.__getitem__)
 
 # 使用数据加载器
-dataloader = DataLoader(dataset, batch_size=32)
+dataloader = DataLoader(dataset, batch_size=32, num_workers=0)
 for batch in dataloader:
     pass
 ```

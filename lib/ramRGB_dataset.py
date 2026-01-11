@@ -42,7 +42,7 @@ class RandomRGBDataset(ImageFolder):
     def __getitem__(self, idx):
         # ImageFolder's samples is a list of (path, class_index)
         _, label = self.samples[idx]
-        
+
         if self.cache_decorator is not None:
             if self._wrapped_getitem is None:
                 # Lazy wrap to avoid pickling issues with bound methods on Windows
@@ -50,7 +50,7 @@ class RandomRGBDataset(ImageFolder):
             image = self._wrapped_getitem(idx)
         else:
             image = self._raw_load(idx)
-            
+
         return image, label
 
     def getMissCount(self):
